@@ -70,6 +70,7 @@ export interface Room {
   seats: (Seat | null)[];
   status: string;
   G: Game | null;
+  version: number;
   keepBothEndsAt?: number | null;
   peekEndsAt?: number | null;
 }
@@ -260,6 +261,7 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     return {
       status: room.status,
       code: room.code,
+      version: room.version,
       n: room.n,
       cardsN: room.cardsN,
       players: room.seats.map((s, i) => ({ id: i, name: s ? s.name : null, ready: !!s })),
@@ -271,6 +273,7 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
   return {
     status: room.status,
     code: room.code,
+    version: room.version,
     waiting: false,
     you: viewerId,
     turn: G.turn,
