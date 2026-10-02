@@ -47,7 +47,7 @@ export async function insertRoom(room: Room): Promise<void> {
     code: room.code,
     n: room.n,
     cards_n: room.cardsN,
-    seats: room.seats,
+    seats: room.seats as never,
     status: room.status,
     state: room.G,
     version: room.version,
@@ -59,7 +59,7 @@ export async function saveRoom(room: Room): Promise<void> {
   const { data, error } = await getSupabaseAdmin()
     .from("declare_rooms")
     .update({
-      seats: room.seats,
+      seats: room.seats as never,
       status: room.status,
       state: room.G,
       version: room.version + 1,
