@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { newCode, publicState, type Room } from "@/lib/declare-engine";
+import { makeCode, publicState, type Room } from "@/lib/declare-engine";
 import { insertRoom, roomExists, writeViews } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -19,8 +19,8 @@ export const Route = createFileRoute("/api/public/declare/create")({
         }
         const { n, cardsN, name } = parsed.data;
 
-        let code = newCode();
-        for (let i = 0; i < 10 && (await roomExists(code)); i++) code = newCode();
+        let code = makeCode();
+        for (let i = 0; i < 10 && (await roomExists(code)); i++) code = makeCode();
 
         const room: Room = {
           code,
