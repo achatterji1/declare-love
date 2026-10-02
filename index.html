@@ -4,73 +4,103 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Declare</title>
+<meta name="description" content="A quick, tactical memory card game for friends, family, and faraway rivals.">
+<meta property="og:title" content="Declare — The memory card game">
+<meta property="og:description" content="Play a quick game locally or invite friends online.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&amp;family=Playfair+Display:wght@600;700&amp;display=swap" rel="stylesheet">
 <style>
   :root {
-    --canvas: #e7dccb;
-    --canvas-deep: #d8c6b0;
-    --felt: #b8ad8f;
-    --felt-deep: #9b8e70;
-    --panel: #f5eee3;
-    --panel-soft: #eee4d5;
-    --ink: #3f342b;
-    --muted: #756656;
-    --line: #c8b59d;
-    --accent: #8b7657;
-    --accent-dark: #685640;
-    --olive: #68745a;
-    --olive-dark: #4d5944;
-    --cream: #fffaf1;
-    --red: #a24f48;
+    --canvas: #f9f7f2;
+    --panel: #ffffff;
+    --panel-soft: #f3efe7;
+    --ink: #272822;
+    --muted: #737267;
+    --line: #ded8cd;
+    --accent: #d96f58;
+    --accent-dark: #a44e3c;
+    --olive: #87955f;
+    --olive-dark: #596640;
+    --sand: #d4a373;
+    --cream: #fffdf9;
+    --red: #b44f45;
+    --shadow: 0 20px 55px rgba(69, 60, 46, .10);
   }
 
   * { box-sizing: border-box; }
   body {
     margin: 0;
     min-height: 100vh;
-    background:
-      radial-gradient(circle at 50% -20%, rgba(255,250,240,.8), transparent 52%),
-      linear-gradient(145deg, var(--canvas) 0%, #dfd0bc 100%);
+    background: var(--canvas);
     color: var(--ink);
-    font: 16px/1.45 Georgia, 'Times New Roman', serif;
+    font: 16px/1.5 'Outfit', sans-serif;
   }
-  main { max-width: 1020px; margin: 0 auto; padding: 28px 20px 42px; }
+  main { max-width: 1040px; margin: 0 auto; padding: 48px 24px 56px; }
+  .brand { text-align: center; margin: 0 auto 30px; }
+  .brand-mark { display: inline-flex; align-items: center; gap: 10px; color: var(--olive-dark); font-size: .76rem; font-weight: 700; text-transform: uppercase; letter-spacing: .18em; }
+  .brand-mark::before, .brand-mark::after { content: ""; width: 30px; height: 1px; background: var(--sand); }
   h1 {
-    margin: 0 0 6px;
-    color: var(--accent-dark);
-    font: 700 clamp(2rem, 5vw, 3.15rem)/1 Georgia, serif;
-    letter-spacing: .16em;
-    text-shadow: 0 1px 0 rgba(255,255,255,.6);
+    margin: 8px 0 5px;
+    color: var(--ink);
+    font: 700 clamp(3.2rem, 8vw, 5.5rem)/.95 'Playfair Display', serif;
+    letter-spacing: 0;
   }
-  h3 { color: var(--accent-dark); margin: 4px 0 10px; }
+  .tagline { margin: 12px 0 0; color: var(--muted); font-size: 1.04rem; }
+  h2, h3 { font-family: 'Playfair Display', serif; letter-spacing: 0; }
+  h2 { margin: 0; font-size: 1.55rem; }
+  h3 { color: var(--ink); margin: 4px 0 10px; }
   button, input {
     font: inherit;
     color: var(--ink);
-    background: linear-gradient(180deg, #e5d6c3, #d4c1aa);
-    border: 1px solid #b79e80;
-    border-radius: 9px;
-    padding: 10px 14px;
+    background: var(--cream);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 11px 14px;
     cursor: pointer;
-    margin: 4px;
-    box-shadow: 0 2px 5px rgba(82,61,41,.12), inset 0 1px 0 rgba(255,255,255,.45);
-    transition: background .16s ease, transform .16s ease, box-shadow .16s ease;
+    margin: 3px;
+    box-shadow: none;
+    transition: background .16s ease, transform .16s ease, border-color .16s ease;
   }
   button:hover:not(:disabled) {
-    background: linear-gradient(180deg, #eee1d0, #d9c7b1);
-    box-shadow: 0 4px 9px rgba(82,61,41,.16), inset 0 1px 0 rgba(255,255,255,.55);
+    background: var(--panel-soft);
+    border-color: var(--sand);
     transform: translateY(-1px);
   }
   button:active:not(:disabled) { transform: translateY(0); }
-  input { cursor: text; width: 8em; background: #fffaf1; }
-  input:focus { outline: 2px solid rgba(104,116,90,.45); border-color: var(--olive); }
+  input { cursor: text; width: 100%; background: var(--panel); }
+  input:focus { outline: 3px solid color-mix(in srgb, var(--olive) 20%, transparent); border-color: var(--olive); }
   button:disabled { opacity: .42; cursor: default; box-shadow: none; }
+  .primary { background: var(--ink); border-color: var(--ink); color: var(--cream); font-weight: 600; }
+  .primary:hover:not(:disabled) { background: var(--olive-dark); border-color: var(--olive-dark); }
   .panel {
-    background: rgba(248,242,233,.88);
+    background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 16px;
-    padding: 18px;
-    margin: 12px 0;
-    box-shadow: 0 10px 28px rgba(84,63,42,.12), inset 0 1px 0 rgba(255,255,255,.7);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 14px 0;
+    box-shadow: var(--shadow);
   }
+  #setup { padding: 0; overflow: hidden; }
+  .setup-intro { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding: 26px 28px 22px; border-bottom: 1px solid var(--line); }
+  .setup-intro p { margin: 5px 0 0; color: var(--muted); }
+  .mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mode { padding: 28px; min-width: 0; }
+  .mode + .mode { border-left: 1px solid var(--line); }
+  .mode-icon { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 50%; background: var(--panel-soft); color: var(--olive-dark); font-size: 1.1rem; }
+  .mode p { color: var(--muted); margin: 0 0 20px; }
+  .field { margin: 12px 0; }
+  .field label { display: block; margin: 0 0 6px; color: var(--muted); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  .segmented { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+  .segmented button { margin: 0; }
+  .segmented button.selected { border-color: var(--olive); background: color-mix(in srgb, var(--olive) 14%, var(--panel)); color: var(--olive-dark); font-weight: 700; }
+  .action-stack { display: grid; gap: 8px; margin-top: 16px; }
+  .action-stack button { width: 100%; margin: 0; }
+  .join-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .join-row button, .join-row input { margin: 0; }
+  #choice { grid-column: 1 / -1; min-height: 1.3em; margin: 0; padding: 14px 28px; border-top: 1px solid var(--line); background: var(--panel-soft); color: var(--muted); text-align: center; font-size: .9rem; }
   .players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .seat {
     min-width: 0;
@@ -140,7 +170,7 @@
     border-left: 4px solid var(--accent);
     border-radius: 6px;
   }
-  #inviteBox { font-size: 1.1em; background: rgba(227,215,196,.52); border-radius: 10px; padding: 12px; margin-top: 12px !important; }
+  #inviteBox { font-size: 1em; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 7px; padding: 14px; margin-top: 16px !important; overflow-wrap: anywhere; }
   #inviteCode { font-size: 1.6em; letter-spacing: .2em; color: var(--olive-dark); }
   #inviteLink a { color: var(--olive-dark) !important; }
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
@@ -162,39 +192,66 @@
   #memorizeBar .hint { flex: 1; min-width: 12em; }
 
   @media (max-width: 620px) {
-    main { padding: 20px 12px 30px; }
+    main { padding: 28px 14px 34px; }
+    .brand { margin-bottom: 22px; }
     .panel { padding: 14px; border-radius: 13px; }
+    #setup { padding: 0; }
+    .setup-intro { display: block; padding: 22px 20px 18px; }
+    .mode-grid { grid-template-columns: 1fr; }
+    .mode { padding: 22px 20px; }
+    .mode + .mode { border-left: 0; border-top: 1px solid var(--line); }
+    #choice { padding: 13px 20px; }
     .players { grid-template-columns: 1fr; }
     button, input { padding: 9px 11px; }
   }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>DECLARE</h1>
+  <header class="brand">
+    <span class="brand-mark">A memory card game</span>
+    <h1>Declare</h1>
+    <p class="tagline">Remember what matters. Bluff about the rest.</p>
+  </header>
   <p id="err"></p>
   <section id="setup" class="panel">
-    <h3>Local</h3>
-    <button type="button" onclick="deal(2)">You vs computer</button>
-    <button type="button" onclick="setCards(4)">4 cards</button>
-    <button type="button" onclick="setCards(6)">6 cards</button>
-    <p id="choice">Or invite a friend on another device:</p>
-    <h3>Online invite</h3>
-    <div class="row">
-      <input id="name" placeholder="Your name" maxlength="16">
-      <label for="numPlayers" style="margin:4px 8px">Number of players</label>
-      <input id="numPlayers" type="number" min="2" max="8" value="2" style="width:4em">
-      <button type="button" onclick="createInvite()">Create invite</button>
+    <div class="setup-intro">
+      <div><h2>Choose your table</h2><p>A round takes only a few minutes.</p></div>
     </div>
-    <div class="row">
-      <input id="joinCode" placeholder="Code" maxlength="4" style="text-transform:uppercase">
-      <button type="button" onclick="joinInvite()">Join with code</button>
+    <div class="mode-grid">
+      <article class="mode">
+        <div class="mode-icon" aria-hidden="true">♣</div>
+        <h2>Play here</h2>
+        <p>Face the computer, or pass the device between two players.</p>
+        <div class="field">
+          <label>Cards per player</label>
+          <div class="segmented">
+            <button type="button" id="cards4" class="selected" onclick="setCards(4)">4 cards</button>
+            <button type="button" id="cards6" onclick="setCards(6)">6 cards</button>
+          </div>
+        </div>
+        <div class="action-stack">
+          <button class="primary" type="button" onclick="deal(2)">Play against computer</button>
+          <button type="button" onclick="deal(2, true)">Two-player pass &amp; play</button>
+        </div>
+      </article>
+      <article class="mode">
+        <div class="mode-icon" aria-hidden="true">♦</div>
+        <h2>Play online</h2>
+        <p>Create a private table, or join friends with their four-character code.</p>
+        <div class="field"><label for="name">Your name</label><input id="name" placeholder="Enter your name" maxlength="16"></div>
+        <div class="field"><label for="numPlayers">Players</label><input id="numPlayers" type="number" min="2" max="8" value="2"></div>
+        <div class="action-stack"><button class="primary" type="button" onclick="createInvite()">Create private table</button></div>
+        <div class="field"><label for="joinCode">Have a code?</label><div class="join-row"><input id="joinCode" placeholder="ABCD" maxlength="4" style="text-transform:uppercase"><button type="button" onclick="joinInvite()">Join</button></div></div>
+        <div id="inviteBox" style="display:none;margin-top:10px">
+          <div>Room code: <strong id="inviteCode"></strong></div>
+          <div id="inviteLink"></div>
+          <div id="lobby"></div>
+        </div>
+      </article>
     </div>
-    <div id="inviteBox" style="display:none;margin-top:10px">
-      <div>Room code: <strong id="inviteCode"></strong></div>
-      <div id="inviteLink"></div>
-      <div id="lobby"></div>
-    </div>
+    <p id="choice">Four cards selected — choose a table to begin.</p>
   </section>
   <section id="table" class="panel" style="display:none">
     <div id="memorizeBar">
@@ -232,7 +289,12 @@ var peekTimer = null;
 var KEEP_BOTH_MS = 1200;
 var PEEK_MS = 1300;
 
-function setCards(n) { cardsN = n; document.getElementById("choice").textContent = n + " cards. Click a player button or create an invite."; }
+function setCards(n) {
+  cardsN = n;
+  document.getElementById("cards4").className = n === 4 ? "selected" : "";
+  document.getElementById("cards6").className = n === 6 ? "selected" : "";
+  document.getElementById("choice").textContent = n + " cards selected — choose a table to begin.";
+}
 function val(card) {
   if (!card) return 0;
   if (card.r === "A") return 1;

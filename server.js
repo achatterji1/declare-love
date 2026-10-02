@@ -4,7 +4,8 @@ const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 
-const PORT = process.env.PORT || 8765;
+const portFlag = process.argv.indexOf("--port");
+const PORT = process.env.PORT || (portFlag >= 0 ? process.argv[portFlag + 1] : null) || 8765;
 const MEMORIZE_MS = 30000;
 const KEEP_BOTH_MS = 1200;
 const PEEK_MS = 1300;
