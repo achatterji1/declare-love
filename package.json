@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "dev": "node server.js",
-    "build:dev": "node --check server.js",
-    "test": "node --check server.js"
+    "build:dev": "node --check server.js && rm -rf dist && mkdir -p dist && cp index.html dist/index.html",
+    "test": "node --check server.js",
+    "build": "node --check server.js && rm -rf dist && mkdir -p dist && cp index.html dist/index.html"
   },
   "keywords": [],
   "author": "",
