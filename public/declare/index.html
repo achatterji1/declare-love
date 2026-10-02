@@ -441,7 +441,11 @@ function createInvite() {
   var n = parseInt(document.getElementById("numPlayers").value, 10);
   if (!(n >= 2 && n <= 8)) { err("Choose between 2 and 8 players."); return; }
   ensureWs(function() {
-    ws.send(JSON.stringify({ type: "create", n: n, cardsN: cardsN, name: playerName() }));
+    api("create", { n: n, cardsN: cardsN, name: playerName() }).then(function(res) {
+      roomCode = res.code; mySeat = res.seat; seatToken = res.token;
+      subscribe();
+      handleState(res.state, res.code);
+    }).catch(function(e) { err(e.message); });
   });
 }
 
@@ -451,7 +455,11 @@ function joinInvite() {
   var code = document.getElementById("joinCode").value.trim().toUpperCase();
   if (!code) { err("Enter a room code."); return; }
   ensureWs(function() {
-    ws.send(JSON.stringify({ type: "join", code: code, name: playerName() }));
+    api("join", { code: code, name: playerName() }).then(function(res) {
+      roomCode = res.code; mySeat = res.seat; seatToken = res.token;
+      subscribe();
+      handleState(res.state, res.code);
+    }).catch(function(e) { err(e.message); });
   });
 }
 
