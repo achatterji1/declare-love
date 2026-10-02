@@ -18,7 +18,7 @@ function rowToRoom(row: RoomRow): Room {
     cardsN: row.cards_n,
     seats: (row.seats ?? []) as (Seat | null)[],
     status: row.status,
-    G: row.state,
+    G: row.state as Room["G"],
     version: row.version,
   };
 }
@@ -49,7 +49,7 @@ export async function insertRoom(room: Room): Promise<void> {
     cards_n: room.cardsN,
     seats: room.seats as never,
     status: room.status,
-    state: room.G,
+    state: room.G as never,
     version: room.version,
   });
   if (error) throw new Error(error.message);
@@ -61,7 +61,7 @@ export async function saveRoom(room: Room): Promise<void> {
     .update({
       seats: room.seats as never,
       status: room.status,
-      state: room.G,
+      state: room.G as never,
       version: room.version + 1,
       updated_at: new Date().toISOString(),
     })
@@ -78,7 +78,7 @@ export async function writeViews(room: Room): Promise<void> {
   const rows = room.seats.map((_, seat) => ({
     code: room.code,
     seat,
-    view: publicState(room, seat),
+    view: publicState(room, seat) as never,
     version: room.version,
     updated_at: new Date().toISOString(),
   }));
