@@ -158,7 +158,6 @@
     color: var(--accent-dark);
     font-weight: 700;
   }
-  #deck { color: var(--muted); font-style: italic; min-height: 1.4em; }
   #err { color: #98483d; min-height: 1.2em; font-weight: 700; }
   #log {
     min-height: 3em;
@@ -169,6 +168,7 @@
     border-left: 4px solid var(--accent);
     border-radius: 6px;
   }
+  #log[hidden] { display: none; }
   #inviteBox { font-size: 1em; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 7px; padding: 14px; margin-top: 16px !important; overflow-wrap: anywhere; }
   #inviteCode { font-size: 1.6em; letter-spacing: .2em; color: var(--olive-dark); }
   #inviteLink a { color: var(--olive-dark) !important; }
@@ -270,9 +270,8 @@
     <button type="button" onclick="doRedeal()">New deal</button>
     <span id="who"></span>
     <div id="center"></div>
-    <p id="deck"></p>
     <div id="seats" class="players"></div>
-    <p id="log"></p>
+    <p id="log" hidden></p>
   </section>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -304,7 +303,23 @@ function val(card) {
   return Number(card.r);
 }
 function label(card) { return card.r + GLYPH[card.s]; }
-function say(t) { document.getElementById("log").textContent = t; }
+// Card memory is the game: mid-play narration stays off the table.
+// The log is only the round result ("P1 18, Computer 13. Computer wins." / "Tie.").
+function isRoundOutcome(t) {
+  if (!t) return false;
+  return /(?: wins\.| Tie\.)$/.test(String(t).trim());
+}
+function say(t) {
+  var el = document.getElementById("log");
+  if (!el) return;
+  if (!isRoundOutcome(t)) {
+    el.textContent = "";
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.textContent = String(t).trim();
+}
 function err(t) { document.getElementById("err").textContent = t || ""; }
 
 function formatCountdown(ms) {
@@ -576,7 +591,6 @@ function renderOnline() {
       pc2.disabled = true;
     }
   }
-  document.getElementById("deck").textContent = (!memorizing && online.free && online.pileTop) ? "Pick available (passed/discarded): " + label(online.pileTop) : "";
   say(online.log || "");
   var center = document.getElementById("center");
   center.innerHTML = "";
@@ -922,7 +936,6 @@ function render() {
     skip.style.display = canKingTrade ? "" : "none";
     skip.disabled = !(canKingTrade && !cpu());
   }
-  document.getElementById("deck").textContent = (!memorizing && G.free && pileTop()) ? "Pick available (passed/discarded): " + label(pileTop()) : "";
   var center = document.getElementById("center");
   center.innerHTML = "";
   if (!memorizing) {
