@@ -169,6 +169,33 @@
     border-left: 4px solid var(--accent);
     border-radius: 6px;
   }
+  #actTimer {
+    display: none;
+    margin: 8px 3px 0;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: #e6dcc9;
+    color: var(--accent-dark);
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  #actTimer.on { display: inline-block; }
+  #actTimer.urgent { background: #f3d2cb; color: #8a332b; }
+  #confirmBar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 12px 14px;
+    border: 2px solid var(--accent);
+    border-radius: 10px;
+    background: #fff6f1;
+    flex-wrap: wrap;
+  }
+  #confirmBar.on { display: flex; }
+  #confirmText { font-weight: 700; margin-right: 6px; }
+  #confirmYes { background: var(--olive-dark); border-color: var(--olive-dark); color: #fffdf9; font-weight: 700; }
+  #confirmNo { font-weight: 700; }
   #inviteBox { font-size: 1em; background: var(--panel-soft); border: 1px solid var(--line); border-radius: 7px; padding: 14px; margin-top: 16px !important; overflow-wrap: anywhere; }
   #inviteCode { font-size: 1.6em; letter-spacing: .2em; color: var(--olive-dark); }
   #inviteLink a { color: var(--olive-dark) !important; }
@@ -266,6 +293,12 @@
     <button type="button" id="confirmTrade" onclick="doConfirmTrade()" style="display:none">Trade</button>
     <button type="button" id="skipTrade" onclick="doSkipTrade()" style="display:none">Skip trade</button>
     <button type="button" id="passChain" onclick="doPassChain()" style="display:none" aria-hidden="true" disabled>Done discarding</button>
+    <p id="actTimer"></p>
+    <div id="confirmBar">
+      <span id="confirmText">Confirm this choice?</span>
+      <button type="button" id="confirmYes" onclick="doConfirmChoice()" disabled>Yes</button>
+      <button type="button" id="confirmNo" onclick="doCancelChoice()" disabled>No</button>
+    </div>
     <button type="button" id="call" onclick="doDeclare()">Declare</button>
     <button type="button" onclick="doRedeal()">New deal</button>
     <span id="who"></span>
@@ -283,10 +316,12 @@ var GLYPH = {H:"\u2665", D:"\u2666", C:"\u2663", S:"\u2660"};
 var cardsN = 4, hot = false, G = null, mode = "local";
 var ws = null, online = null;
 var memorizeTicker = null, memorizeEndsAt = null;
+var actTicker = null, actTickerEnds = null;
 var keepBothTimer = null;
 var peekTimer = null;
 var KEEP_BOTH_MS = 1200;
 var PEEK_MS = 1300;
+var ACT_MS = 30000;
 
 function setCards(n) {
   cardsN = n;
@@ -346,6 +381,69 @@ function disablePlayButtons(disabled) {
     document.getElementById(id).disabled = !!disabled;
   });
 }
+function stopActTicker() {
+  if (actTicker) { clearInterval(actTicker); actTicker = null; }
+  actTickerEnds = null;
+}
+function updateActTimerDisplay() {
+  var el = document.getElementById("actTimer");
+  if (!el) return;
+  if (!actTickerEnds) { el.textContent = ""; el.className = ""; return; }
+  var left = actTickerEnds - Date.now();
+  el.className = left <= 10000 ? "on urgent" : "on";
+  el.textContent = formatCountdown(left) + " to confirm";
+}
+function startActTicker(endsAt, onExpire) {
+  stopActTicker();
+  actTickerEnds = endsAt;
+  updateActTimerDisplay();
+  actTicker = setInterval(function() {
+    updateActTimerDisplay();
+    if (actTickerEnds && Date.now() >= actTickerEnds) {
+      var cb = onExpire;
+      stopActTicker();
+      if (cb) cb();
+    }
+  }, 200);
+}
+function choiceVerb(choice) {
+  if (choice === "pass") return "Pass";
+  if (choice === "swap") return "Swap in";
+  if (choice === "claim") return "Pick";
+  return "Choose";
+}
+function showChoiceUi(pending, endsAt, interactive, topLabel, onExpire) {
+  var bar = document.getElementById("confirmBar");
+  var yes = document.getElementById("confirmYes");
+  var no = document.getElementById("confirmNo");
+  if (!bar) return;
+  if (pending) {
+    document.getElementById("confirmText").textContent = choiceVerb(pending) + " " + (topLabel || "this card") + "?";
+    bar.className = "on";
+    yes.disabled = !interactive;
+    no.disabled = !interactive;
+  } else {
+    bar.className = "";
+    yes.disabled = true;
+    no.disabled = true;
+  }
+  if (endsAt) {
+    if (Date.now() >= endsAt) {
+      stopActTicker();
+      var el = document.getElementById("actTimer");
+      el.className = "on urgent";
+      el.textContent = "0:00 to confirm";
+      if (onExpire) onExpire();
+      return;
+    }
+    startActTicker(endsAt, onExpire);
+  } else {
+    stopActTicker();
+    var idle = document.getElementById("actTimer");
+    idle.textContent = "";
+    idle.className = "";
+  }
+}
 
 function pileTop() { return G.pile.length ? G.pile[G.pile.length - 1] : null; }
 
@@ -396,7 +494,7 @@ function handleState(state, code) {
 function scheduleTick() {
   if (tickTimeout) { clearTimeout(tickTimeout); tickTimeout = null; }
   if (!online || !roomCode) return;
-  var endsAt = online.memorizeEndsAt || online.phaseEndsAt;
+  var endsAt = online.memorizeEndsAt || online.actEndsAt || online.phaseEndsAt;
   if (!endsAt) return;
   var delay = Math.max(0, endsAt - Date.now()) + 150;
   tickTimeout = setTimeout(function() {
@@ -606,26 +704,46 @@ function renderOnline() {
     grid.style.gridTemplateColumns = "repeat(" + cols + ", 72px)";
     player.slots.forEach(function(c, i) {
       var known = c && c.known;
-      var highlight = !memorizing && (online.phase === "pick" || online.phase === "power" || online.phase === "chain" || online.phase === "dumpGive" || online.phase === "act" || (online.phase === "draw" && online.free)) && online.pick && online.pick.indexOf(player.id + ":" + i) >= 0;
+      var highlight = !memorizing && !online.pending && (online.phase === "pick" || online.phase === "power" || online.phase === "chain" || online.phase === "dumpGive" || online.phase === "act" || (online.phase === "draw" && online.free)) && online.pick && online.pick.indexOf(player.id + ":" + i) >= 0;
       var el = cardEl(c && known ? c : c ? {hidden:true} : null, !!(c && known), highlight);
       if (!c) el.textContent = "·";
       else if (!known) { el.className = "card back"; el.textContent = "??"; }
       el.setAttribute("data-p", player.id);
       el.setAttribute("data-i", i);
       el.onclick = function() {
-        if (mode === "online" && !memorizing) sendAction({ action: "card", i: i, p: player.id });
+        if (mode === "online" && !memorizing && !(online && online.pending)) sendAction({ action: "card", i: i, p: player.id });
       };
       grid.appendChild(el);
     });
     seat.appendChild(grid);
     seatsEl.appendChild(seat);
   });
+  if (memorizing) {
+    showChoiceUi(null, null, false, "", null);
+  } else {
+    if (online.pending && myTurn) disablePlayButtons(true);
+    showChoiceUi(online.pending, online.actEndsAt, myTurn, online.pileTop ? label(online.pileTop) : "", function() {
+      if (roomCode) api("tick", { code: roomCode }).catch(function() {});
+    });
+  }
 }
 
 function doDraw() { if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
-function doPass() { if (mode === "online") sendAction({ action: "pass" }); else pass(); }
-function doClaim() { if (mode === "online") sendAction({ action: "claim" }); else armPick(); }
-function doArm(intent) { if (mode === "online") sendAction({ action: "arm", intent: intent }); else arm(intent); }
+function doPass() { requestChoice("pass"); }
+function doClaim() { requestChoice("claim"); }
+function doArm(intent) {
+  if (intent === "swap") return requestChoice("swap");
+  if (mode === "online") sendAction({ action: "arm", intent: intent });
+  else arm(intent);
+}
+function doConfirmChoice() {
+  if (mode === "online") sendAction({ action: "confirm" });
+  else confirmChoice();
+}
+function doCancelChoice() {
+  if (mode === "online") sendAction({ action: "cancel" });
+  else cancelChoice();
+}
 function doDeclare() { if (mode === "online") sendAction({ action: "declare" }); else declareRound(); }
 function doPower() { if (mode === "online") sendAction({ action: "power" }); else startPower(); }
 function doSkipTrade() { if (mode === "online") sendAction({ action: "skipTrade" }); else skipKingTrade(); }
@@ -688,7 +806,7 @@ function deal(n, passLaptop) {
     }
     var ends = Date.now() + 30000;
     clearKeepBothTimer();
-    G = {n:n, cols:cols, deck:deck, pile:[], players:players, turn:0, phase:"memorize", declarer:null, queue:[], intent:null, pick:[], free:false, dumpGive:null, power:null, powerStep:null, powerTarget:null, powerMine:null, chainPid:null, chainRank:null, chainSkipFree:null, memorizeReady: Array(n).fill(false), memorizeEndsAt: ends};
+    G = {n:n, cols:cols, deck:deck, pile:[], players:players, turn:0, phase:"memorize", declarer:null, queue:[], intent:null, pick:[], free:false, dumpGive:null, power:null, powerStep:null, powerTarget:null, powerMine:null, chainPid:null, chainRank:null, chainSkipFree:null, pending:null, actEndsAt:null, memorizeReady: Array(n).fill(false), memorizeEndsAt: ends};
     document.getElementById("setup").style.display = "none";
     document.getElementById("table").style.display = "block";
     say("Memorize your bottom two cards. Click Ready when done (or wait for the timer).");
@@ -765,6 +883,7 @@ function placeCardInHand(pid, card, preferI) {
   return slots.length - 1;
 }
 function startDumpGive(actor, oppPid, emptiedI, rank) {
+  clearDecisionTimer();
   G.dumpGive = { actor: actor, oppPid: oppPid, emptiedI: emptiedI, rank: rank };
   G.phase = "dumpGive";
   G.intent = null;
@@ -820,9 +939,11 @@ function tryDumpOpponent(pid, i) {
   return true;
 }
 function wrongOppDumpKeepBoth(actor, oppPid, slotI) {
+  if (!G) return;
   var card = G.players[oppPid].slots[slotI];
   var drawn = pileTop();
   if (!card || !drawn) return;
+  clearDecisionTimer();
   G.free = false;
   G.intent = null;
   G.pick = [];
@@ -921,6 +1042,7 @@ function render() {
     conf.disabled = !(canKingTrade && !cpu());
     skip.style.display = canKingTrade ? "" : "none";
     skip.disabled = !(canKingTrade && !cpu());
+    if (G.pending && !cpu()) disablePlayButtons(true);
   }
   document.getElementById("deck").textContent = (!memorizing && G.free && pileTop()) ? "Pick available (passed/discarded): " + label(pileTop()) : "";
   var center = document.getElementById("center");
@@ -955,7 +1077,7 @@ function render() {
       var isBottomTwo = i >= G.cols && i < G.cols + 2;
       var memorizeReveal = memorizing && player.id === viewer && isBottomTwo;
       var known = c && (G.phase === "reveal" || c.known[viewer] || memorizeReveal);
-      var el = cardEl(c, known, !memorizing && (G.phase === "pick" || G.phase === "power" || G.phase === "chain" || G.phase === "dumpGive" || G.phase === "act" || (G.phase === "draw" && G.free)) && G.pick && G.pick.indexOf(player.id + ":" + i) >= 0);
+      var el = cardEl(c, known, !memorizing && !G.pending && (G.phase === "pick" || G.phase === "power" || G.phase === "chain" || G.phase === "dumpGive" || G.phase === "act" || (G.phase === "draw" && G.free)) && G.pick && G.pick.indexOf(player.id + ":" + i) >= 0);
       el.setAttribute("data-p", player.id);
       el.setAttribute("data-i", i);
       el.onclick = memorizing ? null : onCard;
@@ -964,6 +1086,8 @@ function render() {
     seat.appendChild(grid);
     seats.appendChild(seat);
   }
+  if (memorizing) showChoiceUi(null, null, false, "", null);
+  else showChoiceUi(G.pending, G.actEndsAt, !cpu(), pileTop() ? label(pileTop()) : "", expireLocalAct);
 }
 function cardEl(c, known, pick) {
   var el = document.createElement("button");
@@ -989,8 +1113,10 @@ function drawCard() {
     G.pile.push(card);
     G.phase = "act";
     G.pick = [];
+    G.pending = null;
+    G.actEndsAt = Date.now() + ACT_MS;
     addDumpPicks(G.turn);
-    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center).");
+    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to confirm — if time runs out you keep this card.");
     render();
   } catch (e) { err(e.message); }
 }
@@ -1025,6 +1151,91 @@ function arm(intent) {
     ? "Tap a matching card (yours or an opponent " + pileTop().r + "). Wrong own/opponent card: you keep both / take theirs+center."
     : "Tap the card you are giving up.");
   render();
+}
+function clearDecisionTimer() {
+  if (!G) return;
+  G.actEndsAt = null;
+  G.pending = null;
+}
+function decisionTimerOpen() {
+  if (!G || G.actEndsAt == null) return false;
+  if (G.phase === "act" || G.phase === "draw") return true;
+  if (G.phase === "pick" && (G.intent === "swap" || G.intent === "claim" || G.intent === "discard")) return true;
+  return false;
+}
+function choiceLegal(choice) {
+  if (!G || cpu()) return false;
+  if ((choice === "pass" || choice === "swap") && G.phase === "act" && pileTop()) return true;
+  if (choice === "claim" && canPick()) return true;
+  return false;
+}
+function requestChoice(choice) {
+  if (mode === "online") {
+    sendAction({ action: "pending", choice: choice });
+    return;
+  }
+  if (!choiceLegal(choice)) return;
+  if (choice === "claim" && !G.actEndsAt) G.actEndsAt = Date.now() + ACT_MS;
+  G.pending = choice;
+  say(choiceVerb(choice) + " " + label(pileTop()) + "? Yes to confirm, No to choose again.");
+  render();
+}
+function confirmChoice() {
+  if (!G || !G.pending || cpu()) return;
+  var choice = G.pending;
+  if (!choiceLegal(choice)) { G.pending = null; render(); return; }
+  G.pending = null;
+  if (choice === "pass") return pass();
+  if (choice === "swap") return arm("swap");
+  if (choice === "claim") return armPick();
+}
+function cancelChoice() {
+  if (!G || !G.pending) return;
+  G.pending = null;
+  say("Cancelled. Choose Pick, Pass, or Swap again.");
+  render();
+}
+function expireLocalAct() {
+  if (!G || mode !== "local" || G.actEndsAt == null || Date.now() < G.actEndsAt) return;
+  if (!decisionTimerOpen()) { clearDecisionTimer(); render(); return; }
+  forceKeepDrawn();
+}
+function forceKeepDrawn() {
+  var drawn = pileTop();
+  var pid = G.turn;
+  clearDecisionTimer();
+  G.intent = null;
+  G.pick = [];
+  G.chainPid = null;
+  G.chainRank = null;
+  G.chainSkipFree = null;
+  G.dumpGive = null;
+  G.power = null;
+  G.powerStep = null;
+  G.powerTarget = null;
+  G.powerMine = null;
+  if (!drawn) {
+    G.free = false;
+    say("Time's up.");
+    finish();
+    return;
+  }
+  G.free = false;
+  var extra = {r:drawn.r, s:drawn.s, known:[]};
+  for (var k = 0; k < G.n; k++) extra.known.push(false);
+  extra.known[pid] = true;
+  if (!hot && mode === "local" && G.n > 1) extra.known[1] = true;
+  var placedI = placeDrawnInHand(pid, extra);
+  G.pile.pop();
+  G.phase = "keepBoth";
+  G.keepBoth = { pid: pid, handI: placedI, placedI: placedI, priorHandKnown: false };
+  say("Time's up. You keep " + label(drawn) + " — remember where it is.");
+  render();
+  clearKeepBothTimer();
+  keepBothTimer = setTimeout(function() {
+    if (!G || G.phase !== "keepBoth") return;
+    endKeepBothReveal();
+  }, KEEP_BOTH_MS);
 }
 function placeDrawnInHand(pid, card) {
   var slots = G.players[pid].slots;
@@ -1129,6 +1340,7 @@ function wrongDiscardKeepBoth(pid, slotI) {
   var card = G.players[pid].slots[slotI];
   var drawn = pileTop();
   if (!card || !drawn) return;
+  clearDecisionTimer();
   G.free = false;
   G.intent = null;
   G.pick = [];
@@ -1170,6 +1382,7 @@ function onCard(ev) {
   try {
     var pid = Number(ev.currentTarget.getAttribute("data-p"));
     var i = Number(ev.currentTarget.getAttribute("data-i"));
+    if (G.pending) return;
     if (G.phase === "keepBoth" || G.phase === "peekReveal") return;
     if (G.phase === "power") { onPowerCard(pid, i); return; }
     if (G.phase === "dumpGive") {
@@ -1229,6 +1442,7 @@ function onCard(ev) {
 // same rank: allowOne offers a single matching discard/dump, then ends (no multi-chain).
 // keepCenter: skipping must leave a used power card non-pickable.
 function beginChain(pid, rank, allowOne, opts) {
+  clearDecisionTimer();
   var keepCenter = !!(opts && opts.keepCenter);
   G.intent = null;
   G.pick = [];
@@ -1285,6 +1499,7 @@ function startPower() {
     render();
     return;
   }
+  clearDecisionTimer();
   G.power = top.r;
   G.phase = "power";
   G.powerStep = top.r === "10" ? "peek-own" : top.r === "J" ? "peek-opp" : top.r === "Q" ? "q-mine" : "k-peek-own";
@@ -1471,6 +1686,7 @@ function declareRound() {
   next();
 }
 function finish() {
+  clearDecisionTimer();
   G.pick = [];
   G.intent = null;
   G.dumpGive = null;
@@ -1483,6 +1699,7 @@ function finish() {
   next();
 }
 function next() {
+  clearDecisionTimer();
   if (G.declarer !== null && !G.queue.length) return reveal();
   G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
   G.phase = "draw";
