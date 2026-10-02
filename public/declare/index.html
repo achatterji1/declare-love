@@ -277,6 +277,7 @@
     <p id="log"></p>
   </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 var RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 var SUITS = ["H","D","C","S"];
@@ -360,29 +361,75 @@ function powerHint(r) {
 }
 
 
-function wsUrl() {
-  var u = new URL(location.href);
-  var proto = u.protocol === "https:" ? "wss:" : "ws:";
-  return proto + "//" + u.host;
+var cfg = null, seatToken = null, mySeat = null, roomCode = null, tickTimeout = null, pollTimer = null;
+
+function api(path, body) {
+  return fetch("/api/public/declare/" + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  }).then(function(r) {
+    return r.json().then(function(j) {
+      if (!r.ok) throw new Error(j.error || "Request failed (" + r.status + ")");
+      return j;
+    });
+  });
 }
 
 function ensureWs(cb) {
-  if (ws && ws.readyState === 1) return cb();
-  ws = new WebSocket(wsUrl());
-  ws.onopen = function() { cb(); };
-  ws.onerror = function() { err("Could not reach the game server."); };
-  ws.onclose = function() { if (mode === "online") err("Disconnected from server."); };
-  ws.onmessage = function(ev) {
-    var msg = JSON.parse(ev.data);
-    if (msg.type === "error") { err(msg.error); return; }
-    if (msg.type === "created" || msg.type === "joined" || msg.type === "state") {
-      online = msg.state || online;
-      if (msg.code) online.code = msg.code;
-      if (msg.state) online = msg.state;
-      renderOnline();
-    }
-  };
+  if (cfg) return cb();
+  fetch("/api/public/declare/config").then(function(r) { return r.json(); }).then(function(c) {
+    if (c.error) throw new Error(c.error);
+    cfg = c;
+    cb();
+  }).catch(function(e) { err(e.message || "Could not reach the game server."); });
 }
+
+function handleState(state, code) {
+  if (!state) return;
+  if (code) state.code = code;
+  online = state;
+  renderOnline();
+  scheduleTick();
+}
+
+function scheduleTick() {
+  if (tickTimeout) { clearTimeout(tickTimeout); tickTimeout = null; }
+  if (!online || !roomCode) return;
+  var endsAt = online.memorizeEndsAt || online.phaseEndsAt;
+  if (!endsAt) return;
+  var delay = Math.max(0, endsAt - Date.now()) + 150;
+  tickTimeout = setTimeout(function() {
+    api("tick", { code: roomCode }).catch(function() {});
+  }, delay);
+}
+
+function subscribe() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(function() {
+    if (!roomCode || mySeat === null) return;
+    api("state", { code: roomCode, seat: mySeat, token: seatToken })
+      .then(function(res) { handleState(res.state); })
+      .catch(function() {});
+  }, 3000);
+  if (window.supabase && cfg && cfg.url && cfg.key) {
+    try {
+      var sb = window.supabase.createClient(cfg.url, cfg.key);
+      sb.channel("declare-" + roomCode)
+        .on("postgres_changes", { event: "*", schema: "public", table: "declare_views", filter: "code=eq." + roomCode }, function(payload) {
+          var row = payload.new;
+          if (row && row.seat === mySeat) handleState(row.view);
+        })
+        .subscribe();
+    } catch (e) { /* polling backstop covers us */ }
+  }
+}
+
+window.addEventListener("pagehide", function() {
+  if (mode === "online" && roomCode && mySeat !== null && seatToken) {
+    navigator.sendBeacon("/api/public/declare/leave", JSON.stringify({ code: roomCode, seat: mySeat, token: seatToken }));
+  }
+});
 
 function playerName() {
   return (document.getElementById("name").value || "Player").trim().slice(0, 16);
