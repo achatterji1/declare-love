@@ -78,7 +78,7 @@ export function makeDeal(n: number, cardsN: number): any {
     total: 0,
   }));
   for (let k = 0; k < cardsN; k++)
-    for (let p = 0; p < n; p++) players[p].slots[k] = deck.pop();
+    for (let p = 0; p < n; p++) players[p]!.slots[k] = deck.pop();
   const discard = [deck.pop()];
   return {
     phase: "memorize",
