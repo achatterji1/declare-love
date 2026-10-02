@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 8080",
-    "build": "vite build",
-    "build:dev": "vite build",
+    "build": "vite build && node scripts/ensure-dist-index.mjs",
+    "build:dev": "vite build && node scripts/ensure-dist-index.mjs",
     "test": "node --check server.js"
   },
   "dependencies": {
