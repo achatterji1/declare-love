@@ -1,4 +1,4 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -19,8 +19,14 @@ export const Route = createFileRoute("/")({
       { name: "twitter:card", content: "summary" },
     ],
   }),
-  beforeLoad: () => {
-    throw redirect({ href: "/declare/index.html" });
+  server: {
+    handlers: {
+      GET: async () =>
+        new Response(null, {
+          status: 302,
+          headers: { Location: "/declare/index.html" },
+        }),
+    },
   },
   component: () => null,
 });
