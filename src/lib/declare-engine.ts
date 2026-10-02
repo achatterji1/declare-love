@@ -1,9 +1,10 @@
 // Pure TypeScript port of server.js game logic. No sockets, no timers:
 // setTimeout callbacks become deadline timestamps (memorizeEndsAt /
-// keepBothEndsAt / peekEndsAt) advanced by applyTimers(). Callers persist
-// the room and broadcast per-seat views after every mutation.
+// keepBothEndsAt / peekEndsAt / actEndsAt) advanced by applyTimers().
+// Callers persist the room and broadcast per-seat views after every mutation.
 
 export const MEMORIZE_MS = 30000;
+export const ACT_MS = 30000;
 export const KEEP_BOTH_MS = 1200;
 export const PEEK_MS = 1300;
 
@@ -45,6 +46,12 @@ export interface Game {
   powerMine: { pid: number; i: number } | null;
   chainPid: number | null;
   chainRank: string | null;
+  // false = skipping this one-shot must not make the center card pickable (used 10).
+  chainSkipFree: boolean | null;
+  // Pick / Pass / Swap waiting for Yes. Null once confirmed or cancelled.
+  pending: string | null;
+  // Deadline for confirming that choice. Timeout keeps the drawn/center card.
+  actEndsAt: number | null;
   memorizeReady: boolean[] | null;
   memorizeEndsAt: number | null;
   keepBoth: { pid: number; handI: number; placedI: number; priorHandKnown: boolean } | null;
@@ -203,6 +210,58 @@ function placeDrawnInHand(G: Game, pid: number, card: Card): number {
   return placeCardInHandPrefer(G, pid, card, null);
 }
 
+function clearDecisionTimer(G: Game): void {
+  G.actEndsAt = null;
+  G.pending = null;
+}
+
+function decisionTimerOpen(G: Game): boolean {
+  if (G.actEndsAt == null) return false;
+  if (G.phase === "act" || G.phase === "draw") return true;
+  if (G.phase === "pick" && (G.intent === "swap" || G.intent === "claim" || G.intent === "discard")) return true;
+  return false;
+}
+
+function choiceVerb(choice: string): string {
+  if (choice === "pass") return "Pass";
+  if (choice === "swap") return "Swap in";
+  if (choice === "claim") return "Pick";
+  return "Choose";
+}
+
+// Timeout: take the center/drawn card into hand. Not a Pass.
+function forceKeepDrawn(room: Room, now = Date.now()): void {
+  const G = room.G!;
+  const drawn = pileTop(G);
+  const pid = G.turn;
+  clearDecisionTimer(G);
+  G.intent = null;
+  G.pick = [];
+  G.chainPid = null;
+  G.chainRank = null;
+  G.chainSkipFree = null;
+  G.dumpGive = null;
+  G.power = null;
+  G.powerStep = null;
+  G.powerTarget = null;
+  G.powerMine = null;
+  if (!drawn) {
+    G.free = false;
+    G.log = "Time's up.";
+    finish(room);
+    return;
+  }
+  G.free = false;
+  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  extra.known[pid] = true;
+  const placedI = placeDrawnInHand(G, pid, extra);
+  G.pile.pop();
+  G.phase = "keepBoth";
+  G.keepBoth = { pid, handI: placedI, placedI, priorHandKnown: false };
+  G.log = "Time's up. You keep " + label(drawn) + " — remember where it is.";
+  room.keepBothEndsAt = now + KEEP_BOTH_MS;
+}
+
 function score(p: Player): number {
   let s = 0;
   for (const c of p.slots) if (c) s += val(c);
@@ -247,6 +306,9 @@ export function makeDeal(n: number, cardsN: number): Game {
     powerMine: null,
     chainPid: null,
     chainRank: null,
+    chainSkipFree: null,
+    pending: null,
+    actEndsAt: null,
     memorizeReady: Array(n).fill(false),
     memorizeEndsAt: Date.now() + MEMORIZE_MS,
     keepBoth: null,
@@ -285,6 +347,8 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     power: G.power || null,
     powerStep: G.powerStep || null,
     chainRank: G.chainRank || null,
+    pending: G.pending || null,
+    actEndsAt: G.actEndsAt || null,
     memorizeEndsAt: G.phase === "memorize" ? G.memorizeEndsAt : null,
     memorizeReady: G.phase === "memorize" && G.memorizeReady ? G.memorizeReady.slice() : null,
     log: G.log,
@@ -369,6 +433,33 @@ export function endPeekReveal(room: Room): void {
     return;
   }
   G.free = false;
+  if (pr.next === "ten-match") {
+    G.power = null;
+    G.powerStep = null;
+    G.powerTarget = null;
+    G.powerMine = null;
+    G.pick = [];
+    const top = pileTop(G);
+    // Drawn 10 stays on center. A peeked card of the same rank can be discarded once.
+    if (card && top && card.r === top.r) {
+      const rank = card.r;
+      beginChain(room, pr.peeker, rank, true, {
+        keepCenter: true,
+        log:
+          "Peeked a matching " +
+          rank +
+          " — discard that " +
+          rank +
+          " from your hand (or dump an opponent " +
+          rank +
+          "), or Done. One only.",
+      });
+      return;
+    }
+    G.free = false;
+    finish(room);
+    return;
+  }
   G.power = null;
   G.powerStep = null;
   G.powerTarget = null;
@@ -406,6 +497,11 @@ export function applyTimers(room: Room, now = Date.now()): boolean {
     endPeekReveal(room);
     return true;
   }
+  if (G.actEndsAt != null && now >= G.actEndsAt) {
+    if (decisionTimerOpen(G)) forceKeepDrawn(room, now);
+    else clearDecisionTimer(G);
+    return true;
+  }
   return false;
 }
 
@@ -414,6 +510,7 @@ function wrongDiscardKeepBoth(room: Room, pid: number, slotI: number): void {
   const card = G.players[pid].slots[slotI];
   const drawn = pileTop(G);
   if (!card || !drawn) return;
+  clearDecisionTimer(G);
   G.free = false;
   G.intent = null;
   G.pick = [];
@@ -437,6 +534,7 @@ function wrongOppDumpKeepBoth(room: Room, actor: number, oppPid: number, slotI: 
   const card = G.players[oppPid].slots[slotI];
   const drawn = pileTop(G);
   if (!card || !drawn) return;
+  clearDecisionTimer(G);
   G.free = false;
   G.intent = null;
   G.pick = [];
@@ -469,21 +567,34 @@ function swapIntoHand(G: Game, pid: number, i: number): Card {
   return taken;
 }
 
-// One discard/dump per turn overall. After swap/pick only: allowOne offers a single
-// matching discard/dump of the rank put on center, then ends (no multi-chain).
-function beginChain(room: Room, pid: number, rank: string, allowOne?: boolean): void {
+// One discard/dump per turn overall. After swap/pick, or after a 10 peek of the
+// same rank: allowOne offers a single matching discard/dump, then ends (no multi-chain).
+// keepCenter: skipping must leave a used power card non-pickable.
+function beginChain(
+  room: Room,
+  pid: number,
+  rank: string,
+  allowOne?: boolean,
+  opts?: { keepCenter?: boolean; log?: string },
+): void {
   const G = room.G!;
+  const keepCenter = !!(opts && opts.keepCenter);
+  clearDecisionTimer(G);
   G.intent = null;
   G.pick = [];
   G.dumpGive = null;
   G.chainPid = null;
   G.chainRank = null;
+  G.chainSkipFree = null;
   if (pileTop(G)) G.free = true; // discarded/dumped/swapped top Pickable for next
   if (!allowOne) return finish(room);
 
-  // Post-swap / Pick-swap: only if that rank is still in hand
+  // Post-swap / Pick-swap / post-10-peek: only if that rank is still in hand
   const hasOwn = G.players[pid].slots.some((c) => c && c.r === rank);
-  if (!hasOwn) return finish(room);
+  if (!hasOwn) {
+    if (keepCenter) G.free = false;
+    return finish(room);
+  }
 
   G.phase = "chain";
   G.chainPid = pid;
@@ -492,18 +603,24 @@ function beginChain(room: Room, pid: number, rank: string, allowOne?: boolean): 
     if (c && c.r === rank) G.pick.push(pid + ":" + i);
   });
   addDumpPicks(G, pid);
+  if (keepCenter) {
+    G.free = false;
+    G.chainSkipFree = false;
+  }
   G.log =
+    (opts && opts.log) ||
     "You put " +
-    rank +
-    " on center — discard one matching " +
-    rank +
-    " from hand (or dump an opponent " +
-    rank +
-    "), or Done. One only — not a chain.";
+      rank +
+      " on center — discard one matching " +
+      rank +
+      " from hand (or dump an opponent " +
+      rank +
+      "), or Done. One only — not a chain.";
 }
 
 function startDumpGive(room: Room, actor: number, oppPid: number, emptiedI: number, rank: string): void {
   const G = room.G!;
+  clearDecisionTimer(G);
   G.dumpGive = { actor, oppPid, emptiedI, rank };
   G.phase = "dumpGive";
   G.intent = null;
@@ -570,17 +687,20 @@ export function startGame(room: Room): void {
 
 export function finish(room: Room): void {
   const G = room.G!;
+  clearDecisionTimer(G);
   G.pick = [];
   G.intent = null;
   G.dumpGive = null;
   G.chainPid = null;
   G.chainRank = null;
+  G.chainSkipFree = null;
   if (G.declarer !== null) G.queue = G.queue.filter((id) => id !== G.turn);
   nextTurn(room);
 }
 
 export function nextTurn(room: Room): void {
   const G = room.G!;
+  clearDecisionTimer(G);
   if (G.declarer !== null && !G.queue.length) return reveal(room);
   G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
   G.phase = "draw";
@@ -633,6 +753,8 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
   )
     return;
 
+  if (G.pending && pid === G.turn && act !== "confirm" && act !== "cancel" && act !== "pending") return;
+
   if (act === "draw") {
     if (G.phase !== "draw" || pid !== G.turn) return;
     if (!G.deck.length) return reveal(room);
@@ -641,13 +763,74 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
     G.pile.push(card);
     G.phase = "act";
     G.pick = [];
+    G.pending = null;
+    G.actEndsAt = Date.now() + ACT_MS;
     addDumpPicks(G, pid);
     G.log =
       "Drew " +
       label(card) +
       ". " +
       (isPowerRank(card.r) ? powerHint(card.r) + " " : "") +
-      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center).";
+      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to confirm — if time runs out you keep this card.";
+    return;
+  }
+
+  if (act === "pending") {
+    if (pid !== G.turn) return;
+    const choice = msg.choice as string;
+    const top = pileTop(G);
+    if ((choice === "pass" || choice === "swap") && G.phase === "act" && top) {
+      G.pending = choice;
+    } else if (choice === "claim" && G.phase === "draw" && G.free && top) {
+      G.pending = choice;
+      if (G.actEndsAt == null) G.actEndsAt = Date.now() + ACT_MS;
+    } else return;
+    G.log = choiceVerb(choice) + " " + label(top!) + "? Yes to confirm, No to choose again.";
+    return;
+  }
+
+  if (act === "cancel") {
+    if (pid !== G.turn || !G.pending) return;
+    G.pending = null;
+    G.log = "Cancelled. Choose Pick, Pass, or Swap again.";
+    return;
+  }
+
+  if (act === "confirm") {
+    if (pid !== G.turn || !G.pending) return;
+    const choice = G.pending;
+    const top = pileTop(G);
+    G.pending = null;
+    if (choice === "pass") {
+      if (G.phase !== "act" || !top) return;
+      G.free = true;
+      G.log = "Passed. " + label(top) + " stays in the center — next player can Pick it or Discard a match.";
+      clearDecisionTimer(G);
+      return finish(room);
+    }
+    if (choice === "swap") {
+      if (G.phase !== "act" || !top) return;
+      G.intent = "swap";
+      G.phase = "pick";
+      G.pick = [];
+      G.players[pid].slots.forEach((c, i) => {
+        if (c) G.pick.push(pid + ":" + i);
+      });
+      G.log = "Tap the card you are giving up.";
+      return;
+    }
+    if (choice === "claim") {
+      if (!(G.phase === "draw" && G.free && top)) return;
+      if (G.actEndsAt == null) G.actEndsAt = Date.now() + ACT_MS;
+      G.intent = "claim";
+      G.phase = "pick";
+      G.pick = [];
+      G.players[pid].slots.forEach((c, i) => {
+        if (c) G.pick.push(pid + ":" + i);
+      });
+      G.log = "Pick " + label(top) + ": tap the card in your hand you are giving up.";
+      return;
+    }
     return;
   }
 
@@ -718,7 +901,7 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
       if (targetPid !== pid && tryDumpOpponent(room, pid, targetPid, i)) return;
     }
     if (G.phase === "chain") {
-      // Post-swap one-shot match only (allowOne). After this action, turn ends.
+      // Post-swap or post-10-peek one-shot match only (allowOne). After this action, turn ends.
       if (pid !== G.turn) return;
       if (G.pick.indexOf(key) < 0) return;
       if (targetPid !== pid) {
@@ -727,10 +910,16 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
       }
       const ch = G.players[pid].slots[i];
       if (!ch || ch.r !== G.chainRank) return;
+      const afterPeek = G.chainSkipFree === false;
       G.players[pid].slots[i] = null;
       G.pile.push(ch);
       G.free = true;
-      G.log = "Discarded matching " + label(ch) + " after swap. Turn ends; next can Pick it.";
+      G.chainSkipFree = null;
+      G.log =
+        "Discarded matching " +
+        label(ch) +
+        (afterPeek ? " after the peek." : " after swap.") +
+        " Turn ends; next can Pick it.";
       G.pick = [];
       G.chainPid = null;
       G.chainRank = null;
@@ -741,7 +930,7 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
       if (G.pick.indexOf(key) < 0) return;
       const me = G.turn;
       if (G.powerStep === "peek-own") {
-        return startPeekReveal(room, me, targetPid, i, "finish", "Peeked your card: ");
+        return startPeekReveal(room, me, targetPid, i, "ten-match", "Peeked your card: ");
       }
       if (G.powerStep === "peek-opp") {
         if (handLocked(G, targetPid)) return;
@@ -836,6 +1025,7 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
       G.log = "Declarer's hand is locked — no J/Q/K target available. Pass, discard, or swap instead.";
       return;
     }
+    clearDecisionTimer(G);
     G.power = top.r;
     G.phase = "power";
     G.powerStep = top.r === "10" ? "peek-own" : top.r === "J" ? "peek-opp" : top.r === "Q" ? "q-mine" : "k-peek-own";
@@ -848,11 +1038,18 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
 
   if (act === "passChain") {
     if (G.phase !== "chain" || pid !== G.turn) return;
+    const keepCenter = G.chainSkipFree === false;
     G.pick = [];
     G.chainPid = null;
     G.chainRank = null;
-    if (pileTop(G)) G.free = true;
-    G.log = "Done — skipped extra match after swap. Next can Pick center.";
+    G.chainSkipFree = null;
+    if (keepCenter) {
+      G.free = false;
+      G.log = "Done — skipped matching discard after the peek.";
+    } else {
+      if (pileTop(G)) G.free = true;
+      G.log = "Done — skipped extra match after swap. Next can Pick center.";
+    }
     return finish(room);
   }
 
