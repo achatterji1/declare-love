@@ -1,16 +1,16 @@
 # Declare
 
-Multiplayer memory card game (HTML + Node/WebSocket server).
+Multiplayer memory card game (HTML + Lovable Cloud APIs).
 
-## Run locally
+## Play (published)
+
+Open the site root, or `/declare/index.html`.
+
+## Local Node / WebSocket server (optional)
 
 ```bash
 npm install
-node server.js
+npm run start:local
 ```
 
 Open http://127.0.0.1:8765/
-
-## Online
-
-Create invite with Number of players (2–8), share the room code.

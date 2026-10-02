@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev --port 8080",
-    "build": "vite build && node scripts/patch-dist.mjs",
-    "build:dev": "vite build",
-    "test": "node --check server.js"
+    "build": "vite build && node scripts/ensure-dist-index.mjs",
+    "build:dev": "vite build && node scripts/ensure-dist-index.mjs",
+    "test": "node --check local-node/server.js",
+    "start:local": "node local-node/server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

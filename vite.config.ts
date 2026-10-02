@@ -5,9 +5,11 @@ import viteReact from "@vitejs/plugin-react";
 
 export default defineConfig({
   server: { port: 8080 },
-  ssr: { noExternal: true },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   plugins: [tanstackStart(), viteReact()],
+  build: {
+    outDir: "dist",
+  },
 });
