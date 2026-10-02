@@ -9,7 +9,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Declare is a multiplayer memory card game. Play online with 2–8 friends, pass-and-play on one device, or against the computer.",
+          "Declare is a multiplayer memory card game. Play online with 2–8 friends, or against the computer.",
       },
     ],
   }),
