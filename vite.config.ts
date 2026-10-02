@@ -5,11 +5,11 @@ import viteReact from "@vitejs/plugin-react";
 
 export default defineConfig({
   server: { port: 8080 },
+  // Bundle deps into the SSR output so the published host has them, then
+  // scripts/patch-dist.mjs fixes createRequire(import.meta.url) for that host.
+  ssr: { noExternal: true },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   plugins: [tanstackStart(), viteReact()],
-  build: {
-    outDir: "dist",
-  },
 });
