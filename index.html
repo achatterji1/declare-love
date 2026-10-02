@@ -1,0 +1,1759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Declare</title>
+<style>
+  :root {
+    --canvas: #e7dccb;
+    --canvas-deep: #d8c6b0;
+    --felt: #b8ad8f;
+    --felt-deep: #9b8e70;
+    --panel: #f5eee3;
+    --panel-soft: #eee4d5;
+    --ink: #3f342b;
+    --muted: #756656;
+    --line: #c8b59d;
+    --accent: #8b7657;
+    --accent-dark: #685640;
+    --olive: #68745a;
+    --olive-dark: #4d5944;
+    --cream: #fffaf1;
+    --red: #a24f48;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 50% -20%, rgba(255,250,240,.8), transparent 52%),
+      linear-gradient(145deg, var(--canvas) 0%, #dfd0bc 100%);
+    color: var(--ink);
+    font: 16px/1.45 Georgia, 'Times New Roman', serif;
+  }
+  main { max-width: 1020px; margin: 0 auto; padding: 28px 20px 42px; }
+  h1 {
+    margin: 0 0 6px;
+    color: var(--accent-dark);
+    font: 700 clamp(2rem, 5vw, 3.15rem)/1 Georgia, serif;
+    letter-spacing: .16em;
+    text-shadow: 0 1px 0 rgba(255,255,255,.6);
+  }
+  h3 { color: var(--accent-dark); margin: 4px 0 10px; }
+  button, input {
+    font: inherit;
+    color: var(--ink);
+    background: linear-gradient(180deg, #e5d6c3, #d4c1aa);
+    border: 1px solid #b79e80;
+    border-radius: 9px;
+    padding: 10px 14px;
+    cursor: pointer;
+    margin: 4px;
+    box-shadow: 0 2px 5px rgba(82,61,41,.12), inset 0 1px 0 rgba(255,255,255,.45);
+    transition: background .16s ease, transform .16s ease, box-shadow .16s ease;
+  }
+  button:hover:not(:disabled) {
+    background: linear-gradient(180deg, #eee1d0, #d9c7b1);
+    box-shadow: 0 4px 9px rgba(82,61,41,.16), inset 0 1px 0 rgba(255,255,255,.55);
+    transform: translateY(-1px);
+  }
+  button:active:not(:disabled) { transform: translateY(0); }
+  input { cursor: text; width: 8em; background: #fffaf1; }
+  input:focus { outline: 2px solid rgba(104,116,90,.45); border-color: var(--olive); }
+  button:disabled { opacity: .42; cursor: default; box-shadow: none; }
+  .panel {
+    background: rgba(248,242,233,.88);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+    margin: 12px 0;
+    box-shadow: 0 10px 28px rgba(84,63,42,.12), inset 0 1px 0 rgba(255,255,255,.7);
+  }
+  .players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .seat {
+    min-width: 0;
+    background: linear-gradient(145deg, #eee5d8, #e4d8c8);
+    border: 1px solid #cfbda6;
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 4px 12px rgba(83,62,40,.09);
+  }
+  .seat.on {
+    outline: 2px solid var(--olive);
+    outline-offset: 2px;
+    background: linear-gradient(145deg, #f0ead9, #e4dfc9);
+  }
+  .seat.locked {
+    border-style: dashed;
+    border-color: var(--accent);
+    opacity: .92;
+  }
+  .seat.locked .card { cursor: default; }
+  .grid { display: grid; gap: 7px; overflow-x: auto; padding: 2px; }
+  .card {
+    width: 72px;
+    height: 100px;
+    padding: 0;
+    margin: 0;
+    background: linear-gradient(150deg, #fffdf7 0%, #f3e9d9 100%);
+    color: #332a23;
+    border: 1px solid #c3ae91;
+    border-radius: 10px;
+    font: 700 18px/1 Georgia, serif;
+    box-shadow: 0 4px 8px rgba(71,52,35,.18), inset 0 0 0 2px rgba(255,255,255,.5);
+  }
+  .card:hover:not(:disabled) { transform: translateY(-2px); }
+  .back {
+    color: #eee8d8;
+    border-color: #59634d;
+    background:
+      linear-gradient(135deg, rgba(255,255,255,.11) 25%, transparent 25%) 0 0/12px 12px,
+      linear-gradient(315deg, rgba(255,255,255,.08) 25%, transparent 25%) 0 0/12px 12px,
+      linear-gradient(145deg, var(--olive-dark), #73785d);
+    box-shadow: 0 4px 8px rgba(71,52,35,.18), inset 0 0 0 3px rgba(241,232,212,.2);
+  }
+  .red { color: var(--red); }
+  .known { box-shadow: inset 0 0 0 3px #b29461, 0 4px 8px rgba(71,52,35,.18); }
+  .pick { box-shadow: inset 0 0 0 3px var(--olive), 0 0 0 2px rgba(104,116,90,.2), 0 4px 8px rgba(71,52,35,.18); }
+  .pile { height: 124px; position: relative; margin: 8px auto 2px; width: 110px; }
+  .pile .card { position: absolute; }
+  #center { min-height: 6px; display: flex; justify-content: center; }
+  #who {
+    display: inline-block;
+    margin: 8px 0;
+    padding: 6px 11px;
+    border-radius: 999px;
+    background: #e6dcc9;
+    color: var(--accent-dark);
+    font-weight: 700;
+  }
+  #deck { color: var(--muted); font-style: italic; min-height: 1.4em; }
+  #err { color: #98483d; min-height: 1.2em; font-weight: 700; }
+  #log {
+    min-height: 3em;
+    margin: 16px 0 4px;
+    padding: 12px 14px;
+    color: #53463a;
+    background: #eee5d7;
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+  }
+  #inviteBox { font-size: 1.1em; background: rgba(227,215,196,.52); border-radius: 10px; padding: 12px; margin-top: 12px !important; }
+  #inviteCode { font-size: 1.6em; letter-spacing: .2em; color: var(--olive-dark); }
+  #inviteLink a { color: var(--olive-dark) !important; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  #memorizeBar {
+    display: none;
+    background: linear-gradient(135deg, #d9ddc4, #c6cdb0);
+    color: #3e4736;
+    border: 1px solid #929b76;
+    border-radius: 11px;
+    padding: 12px;
+    margin: 8px 0 14px;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    box-shadow: 0 4px 10px rgba(76,83,54,.12);
+  }
+  #memorizeBar.on { display: flex; }
+  #memorizeTimer { font-size: 1.8em; letter-spacing: .05em; color: var(--olive-dark); min-width: 3.2em; font-weight: 700; }
+  #memorizeBar .hint { flex: 1; min-width: 12em; }
+
+  @media (max-width: 620px) {
+    main { padding: 20px 12px 30px; }
+    .panel { padding: 14px; border-radius: 13px; }
+    .players { grid-template-columns: 1fr; }
+    button, input { padding: 9px 11px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>DECLARE</h1>
+  <p id="err"></p>
+  <section id="setup" class="panel">
+    <h3>Local</h3>
+    <button type="button" onclick="deal(2)">You vs computer</button>
+    <button type="button" onclick="setCards(4)">4 cards</button>
+    <button type="button" onclick="setCards(6)">6 cards</button>
+    <p id="choice">Or invite a friend on another device:</p>
+    <h3>Online invite</h3>
+    <div class="row">
+      <input id="name" placeholder="Your name" maxlength="16">
+      <label for="numPlayers" style="margin:4px 8px">Number of players</label>
+      <input id="numPlayers" type="number" min="2" max="8" value="2" style="width:4em">
+      <button type="button" onclick="createInvite()">Create invite</button>
+    </div>
+    <div class="row">
+      <input id="joinCode" placeholder="Code" maxlength="4" style="text-transform:uppercase">
+      <button type="button" onclick="joinInvite()">Join with code</button>
+    </div>
+    <div id="inviteBox" style="display:none;margin-top:10px">
+      <div>Room code: <strong id="inviteCode"></strong></div>
+      <div id="inviteLink"></div>
+      <div id="lobby"></div>
+    </div>
+  </section>
+  <section id="table" class="panel" style="display:none">
+    <div id="memorizeBar">
+      <span id="memorizeTimer">0:30</span>
+      <span class="hint" id="memorizeHint">Memorize your bottom two cards.</span>
+      <button type="button" id="readyBtn" onclick="doReady()">Ready</button>
+    </div>
+    <button type="button" id="draw" onclick="doDraw()">Draw</button>
+    <button type="button" id="claim" onclick="doClaim()">Pick</button>
+    <button type="button" id="leave" onclick="doPass()">Pass</button>
+    <button type="button" id="swap" onclick="doArm('swap')">Swap in</button>
+    <button type="button" id="discard" onclick="doArm('discard')">Discard onto center</button>
+    <button type="button" id="power" onclick="doPower()">Use power</button>
+    <button type="button" id="confirmTrade" onclick="doConfirmTrade()" style="display:none">Trade</button>
+    <button type="button" id="skipTrade" onclick="doSkipTrade()" style="display:none">Skip trade</button>
+    <button type="button" id="passChain" onclick="doPassChain()" style="display:none" aria-hidden="true" disabled>Done discarding</button>
+    <button type="button" id="call" onclick="doDeclare()">Declare</button>
+    <button type="button" onclick="doRedeal()">New deal</button>
+    <span id="who"></span>
+    <div id="center"></div>
+    <p id="deck"></p>
+    <div id="seats" class="players"></div>
+    <p id="log"></p>
+  </section>
+</main>
+<script>
+var RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+var SUITS = ["H","D","C","S"];
+var GLYPH = {H:"\u2665", D:"\u2666", C:"\u2663", S:"\u2660"};
+var cardsN = 4, hot = false, G = null, mode = "local";
+var ws = null, online = null;
+var memorizeTicker = null, memorizeEndsAt = null;
+var keepBothTimer = null;
+var peekTimer = null;
+var KEEP_BOTH_MS = 1200;
+var PEEK_MS = 1300;
+
+function setCards(n) { cardsN = n; document.getElementById("choice").textContent = n + " cards. Click a player button or create an invite."; }
+function val(card) {
+  if (!card) return 0;
+  if (card.r === "A") return 1;
+  if (card.r === "K" && (card.s === "H" || card.s === "D")) return -1;
+  if (card.r === "J") return 11;
+  if (card.r === "Q") return 12;
+  if (card.r === "K") return 13;
+  return Number(card.r);
+}
+function label(card) { return card.r + GLYPH[card.s]; }
+function say(t) { document.getElementById("log").textContent = t; }
+function err(t) { document.getElementById("err").textContent = t || ""; }
+
+function formatCountdown(ms) {
+  var s = Math.max(0, Math.ceil(ms / 1000));
+  var m = Math.floor(s / 60);
+  var r = s % 60;
+  return m + ":" + (r < 10 ? "0" : "") + r;
+}
+function stopMemorizeTicker() {
+  if (memorizeTicker) { clearInterval(memorizeTicker); memorizeTicker = null; }
+}
+function updateMemorizeTimerDisplay() {
+  var el = document.getElementById("memorizeTimer");
+  if (!el) return;
+  if (!memorizeEndsAt) { el.textContent = "0:00"; return; }
+  el.textContent = formatCountdown(memorizeEndsAt - Date.now());
+}
+function startMemorizeTicker(endsAt, onExpire) {
+  stopMemorizeTicker();
+  memorizeEndsAt = endsAt;
+  updateMemorizeTimerDisplay();
+  memorizeTicker = setInterval(function() {
+    updateMemorizeTimerDisplay();
+    if (memorizeEndsAt && Date.now() >= memorizeEndsAt) {
+      stopMemorizeTicker();
+      if (onExpire) onExpire();
+    }
+  }, 200);
+}
+function setMemorizeBar(on, hint, readyDisabled) {
+  var bar = document.getElementById("memorizeBar");
+  bar.className = on ? "on" : "";
+  if (!on) { document.getElementById("readyBtn").disabled = true; return; }
+  document.getElementById("memorizeHint").textContent = hint || "Memorize your bottom two cards.";
+  document.getElementById("readyBtn").disabled = !!readyDisabled;
+}
+function disablePlayButtons(disabled) {
+  ["draw","claim","leave","swap","discard","power","call"].forEach(function(id) {
+    document.getElementById(id).disabled = !!disabled;
+  });
+}
+
+function pileTop() { return G.pile.length ? G.pile[G.pile.length - 1] : null; }
+
+function isPowerRank(r) { return r === "10" || r === "J" || r === "Q" || r === "K"; }
+function powerHint(r) {
+  if (r === "10") return "10: peek one of your cards.";
+  if (r === "J") return "J: peek one opponent card.";
+  if (r === "Q") return "Q: blind-trade one of your cards with an opponent card.";
+  if (r === "K") return "K: peek one of your cards, then one opponent card, then Trade or Skip.";
+  return "";
+}
+
+
+function wsUrl() {
+  var u = new URL(location.href);
+  var proto = u.protocol === "https:" ? "wss:" : "ws:";
+  return proto + "//" + u.host;
+}
+
+function ensureWs(cb) {
+  if (ws && ws.readyState === 1) return cb();
+  ws = new WebSocket(wsUrl());
+  ws.onopen = function() { cb(); };
+  ws.onerror = function() { err("Could not reach the game server."); };
+  ws.onclose = function() { if (mode === "online") err("Disconnected from server."); };
+  ws.onmessage = function(ev) {
+    var msg = JSON.parse(ev.data);
+    if (msg.type === "error") { err(msg.error); return; }
+    if (msg.type === "created" || msg.type === "joined" || msg.type === "state") {
+      online = msg.state || online;
+      if (msg.code) online.code = msg.code;
+      if (msg.state) online = msg.state;
+      renderOnline();
+    }
+  };
+}
+
+function playerName() {
+  return (document.getElementById("name").value || "Player").trim().slice(0, 16);
+}
+
+function createInvite() {
+  mode = "online";
+  err("");
+  var n = parseInt(document.getElementById("numPlayers").value, 10);
+  if (!(n >= 2 && n <= 8)) { err("Choose between 2 and 8 players."); return; }
+  ensureWs(function() {
+    ws.send(JSON.stringify({ type: "create", n: n, cardsN: cardsN, name: playerName() }));
+  });
+}
+
+function joinInvite() {
+  mode = "online";
+  err("");
+  var code = document.getElementById("joinCode").value.trim().toUpperCase();
+  if (!code) { err("Enter a room code."); return; }
+  ensureWs(function() {
+    ws.send(JSON.stringify({ type: "join", code: code, name: playerName() }));
+  });
+}
+
+function sendAction(payload) {
+  if (mode !== "online" || !ws || ws.readyState !== 1) return;
+  payload.type = "action";
+  ws.send(JSON.stringify(payload));
+}
+
+function renderOnline() {
+  if (!online) return;
+  document.getElementById("inviteBox").style.display = "block";
+  document.getElementById("inviteCode").textContent = online.code || "";
+  var link = location.origin + "/?join=" + (online.code || "");
+  document.getElementById("inviteLink").innerHTML = 'Send this link: <a href="' + link + '" style="color:#c6a15b">' + link + "</a>";
+  if (online.waiting) {
+    document.getElementById("setup").style.display = "block";
+    document.getElementById("table").style.display = "none";
+    setMemorizeBar(false);
+    stopMemorizeTicker();
+    var seats = (online.players || []).map(function(p) {
+      return (p.name || "…") + (p.ready ? " ready" : " waiting");
+    }).join(" · ");
+    document.getElementById("lobby").textContent = "Lobby (" + (online.n || 2) + " seats): " + seats;
+    return;
+  }
+  document.getElementById("setup").style.display = "none";
+  document.getElementById("table").style.display = "block";
+  var you = online.you;
+  var memorizing = online.phase === "memorize";
+  var myTurn = online.turn === you && online.phase !== "reveal" && online.phase !== "keepBoth" && online.phase !== "peekReveal" && !memorizing;
+  var acting = myTurn && online.phase === "act";
+  var canPick = myTurn && online.phase === "draw" && online.free && online.pileTop;
+  if (memorizing) {
+    var readyArr = online.memorizeReady || [];
+    var myReady = !!readyArr[you];
+    var readyN = readyArr.filter(Boolean).length;
+    var names = (online.players || []).map(function(p) {
+      return p.name + (p.memorizeReady ? " ✓" : " …");
+    }).join(" · ");
+    setMemorizeBar(true, "Memorize your bottom two. " + readyN + "/" + readyArr.length + " ready — " + names, myReady);
+    if (online.memorizeEndsAt) {
+      startMemorizeTicker(online.memorizeEndsAt, null);
+    }
+    document.getElementById("who").textContent = "Memorize phase";
+    disablePlayButtons(true);
+    document.getElementById("confirmTrade").style.display = "none";
+    document.getElementById("skipTrade").style.display = "none";
+    document.getElementById("passChain").style.display = "none";
+  } else {
+    setMemorizeBar(false);
+    stopMemorizeTicker();
+    document.getElementById("who").textContent = online.phase === "reveal" ? "Round over" : (online.players[online.turn].name + (myTurn ? " (you)" : "") + (online.declarer !== null ? " · final (declarer locked)" : ""));
+    document.getElementById("draw").disabled = !(myTurn && online.phase === "draw");
+    document.getElementById("claim").disabled = !canPick;
+    document.getElementById("call").disabled = !(myTurn && online.phase === "draw" && online.declarer === null);
+    document.getElementById("leave").disabled = !acting;
+    document.getElementById("swap").disabled = !acting;
+    document.getElementById("discard").disabled = !(acting || canPick);
+    var canPower = acting && online.pileTop && isPowerRank(online.pileTop.r);
+    if (canPower && online.pileTop.r !== "10" && online.declarer !== null) {
+      var hasOpp = false;
+      for (var oi = 0; oi < online.players.length; oi++) {
+        var op = online.players[oi];
+        if (op.id === online.turn || op.id === online.declarer) continue;
+        if (op.slots && op.slots.some(function(c) { return !!c; })) { hasOpp = true; break; }
+      }
+      if (!hasOpp) canPower = false;
+    }
+    document.getElementById("power").disabled = !canPower;
+    var canKingTrade = online.phase === "power" && online.powerStep === "k-trade" && myTurn;
+    var conf = document.getElementById("confirmTrade");
+    var skip = document.getElementById("skipTrade");
+    conf.style.display = canKingTrade ? "" : "none";
+    conf.disabled = !canKingTrade;
+    skip.style.display = canKingTrade ? "" : "none";
+    skip.disabled = !canKingTrade;
+    if (online.phase === "power" || online.phase === "keepBoth" || online.phase === "peekReveal" || online.phase === "dumpGive") {
+      document.getElementById("draw").disabled = true;
+      document.getElementById("claim").disabled = true;
+      document.getElementById("call").disabled = true;
+      document.getElementById("leave").disabled = true;
+      document.getElementById("swap").disabled = true;
+      document.getElementById("discard").disabled = true;
+      document.getElementById("power").disabled = true;
+    }
+    var pc2 = document.getElementById("passChain");
+    if (online.phase === "chain") {
+      pc2.style.display = "";
+      pc2.disabled = !myTurn;
+      document.getElementById("draw").disabled = true;
+      document.getElementById("claim").disabled = true;
+      document.getElementById("call").disabled = true;
+      document.getElementById("leave").disabled = true;
+      document.getElementById("swap").disabled = true;
+      document.getElementById("discard").disabled = true;
+      document.getElementById("power").disabled = true;
+    } else if (online.phase === "dumpGive") {
+      pc2.style.display = "none";
+      pc2.disabled = true;
+      document.getElementById("draw").disabled = true;
+      document.getElementById("claim").disabled = true;
+      document.getElementById("call").disabled = true;
+      document.getElementById("leave").disabled = true;
+      document.getElementById("swap").disabled = true;
+      document.getElementById("discard").disabled = true;
+      document.getElementById("power").disabled = true;
+    } else {
+      pc2.style.display = "none";
+      pc2.disabled = true;
+    }
+  }
+  document.getElementById("deck").textContent = (!memorizing && online.free && online.pileTop) ? "Pick available (passed/discarded): " + label(online.pileTop) : "";
+  say(online.log || "");
+  var center = document.getElementById("center");
+  center.innerHTML = "";
+  if (!memorizing) {
+    var pile = document.createElement("div");
+    pile.className = "pile";
+    if (online.pileUnder) {
+      var under = cardEl(online.pileUnder, true, false);
+      under.style.left = "0"; under.style.top = "12px";
+      pile.appendChild(under);
+    }
+    var face = cardEl(online.pileTop, true, false);
+    face.style.left = "18px"; face.style.top = "0";
+    pile.appendChild(face);
+    center.appendChild(pile);
+  }
+  var seatsEl = document.getElementById("seats");
+  seatsEl.innerHTML = "";
+  online.players.forEach(function(player) {
+    var seat = document.createElement("div");
+    seat.className = "seat" + (!memorizing && player.id === online.turn ? " on" : "") + (player.declared ? " locked" : "");
+    var readyTag = memorizing ? (player.memorizeReady ? " · ready" : " · memorizing") : "";
+    seat.innerHTML = "<h3>" + player.name + (player.id === you ? " (you)" : "") + (player.declared ? " · declared (locked)" : "") + readyTag + (player.score != null ? " · " + player.score : "") + "</h3>";
+    var grid = document.createElement("div");
+    grid.className = "grid";
+    var cols = Math.max(2, Math.ceil(player.slots.length / 2));
+    grid.style.gridTemplateColumns = "repeat(" + cols + ", 72px)";
+    player.slots.forEach(function(c, i) {
+      var known = c && c.known;
+      var highlight = !memorizing && (online.phase === "pick" || online.phase === "power" || online.phase === "chain" || online.phase === "dumpGive" || online.phase === "act" || (online.phase === "draw" && online.free)) && online.pick && online.pick.indexOf(player.id + ":" + i) >= 0;
+      var el = cardEl(c && known ? c : c ? {hidden:true} : null, !!(c && known), highlight);
+      if (!c) el.textContent = "·";
+      else if (!known) { el.className = "card back"; el.textContent = "??"; }
+      el.setAttribute("data-p", player.id);
+      el.setAttribute("data-i", i);
+      el.onclick = function() {
+        if (mode === "online" && !memorizing) sendAction({ action: "card", i: i, p: player.id });
+      };
+      grid.appendChild(el);
+    });
+    seat.appendChild(grid);
+    seatsEl.appendChild(seat);
+  });
+}
+
+function doDraw() { if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
+function doPass() { if (mode === "online") sendAction({ action: "pass" }); else pass(); }
+function doClaim() { if (mode === "online") sendAction({ action: "claim" }); else armPick(); }
+function doArm(intent) { if (mode === "online") sendAction({ action: "arm", intent: intent }); else arm(intent); }
+function doDeclare() { if (mode === "online") sendAction({ action: "declare" }); else declareRound(); }
+function doPower() { if (mode === "online") sendAction({ action: "power" }); else startPower(); }
+function doSkipTrade() { if (mode === "online") sendAction({ action: "skipTrade" }); else skipKingTrade(); }
+function doConfirmTrade() { if (mode === "online") sendAction({ action: "confirmTrade" }); else confirmKingTrade(); }
+function doPassChain() { if (mode === "online") sendAction({ action: "passChain" }); else passChain(); }
+function doReady() {
+  if (mode === "online") {
+    sendAction({ action: "ready" });
+    document.getElementById("readyBtn").disabled = true;
+    return;
+  }
+  if (!G || G.phase !== "memorize") return;
+  var viewer = hot ? G.turn : 0;
+  G.memorizeReady[viewer] = true;
+  maybeEndLocalMemorize();
+  render();
+}
+function doRedeal() {
+  stopMemorizeTicker();
+  if (mode === "online") sendAction({ action: "redeal" });
+  else location.reload();
+}
+function maybeEndLocalMemorize() {
+  if (!G || G.phase !== "memorize") return;
+  if (!G.memorizeReady.every(Boolean) && Date.now() < G.memorizeEndsAt) return;
+  endLocalMemorize();
+}
+function endLocalMemorize() {
+  if (!G || G.phase !== "memorize") return;
+  stopMemorizeTicker();
+  G.phase = "draw";
+  G.memorizeReady = null;
+  G.memorizeEndsAt = null;
+  memorizeEndsAt = null;
+  cpuApplyMemorizeKnowledge();
+  say("Cards are face-down — remember them. Draw, Pick a passed/discarded center card, then Pass, Swap in, or Discard.");
+  setMemorizeBar(false);
+  render();
+  if (cpu()) cpuSoon(cpuTurn, 500);
+}
+
+function deal(n, passLaptop) {
+  mode = "local";
+  try {
+    hot = !!passLaptop;
+    var deck = [];
+    for (var s = 0; s < SUITS.length; s++) for (var r = 0; r < RANKS.length; r++) deck.push({r:RANKS[r], s:SUITS[s]});
+    for (var i = deck.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+    var cols = cardsN === 6 ? 3 : 2;
+    var players = [];
+    for (var id = 0; id < n; id++) {
+      var slots = [];
+      for (var k = 0; k < cardsN; k++) {
+        var c = deck.pop();
+        slots.push({r:c.r, s:c.s, known:[]});
+        for (var p = 0; p < n; p++) slots[k].known.push(false);
+      }
+      // Bottom two revealed only during memorize phase (not permanently known)
+      players.push({id:id, slots:slots, declared:false, name: (!hot && id === 1) ? "Computer" : "P" + (id + 1)});
+    }
+    var ends = Date.now() + 30000;
+    clearKeepBothTimer();
+    G = {n:n, cols:cols, deck:deck, pile:[], players:players, turn:0, phase:"memorize", declarer:null, queue:[], intent:null, pick:[], free:false, dumpGive:null, power:null, powerStep:null, powerTarget:null, powerMine:null, memorizeReady: Array(n).fill(false), memorizeEndsAt: ends};
+    document.getElementById("setup").style.display = "none";
+    document.getElementById("table").style.display = "block";
+    say("Memorize your bottom two cards. Click Ready when done (or wait for the timer).");
+    startMemorizeTicker(ends, function() { maybeEndLocalMemorize(); });
+    // Computer auto-ready after a short delay so the human isn't stuck
+    if (!hot) {
+      setTimeout(function() {
+        if (G && G.phase === "memorize" && G.memorizeReady) {
+          G.memorizeReady[1] = true;
+          maybeEndLocalMemorize();
+          render();
+        }
+      }, 600);
+    }
+    render();
+  } catch (e) { err(e.message); }
+}
+function canPick() {
+  // Allowed after opponent Pass OR after opponent Discard/dump onto center (G.free)
+  return G && G.phase === "draw" && G.free && pileTop() && !cpu();
+}
+
+function handLocked(pid) {
+  return !!(G && G.declarer !== null && pid === G.declarer);
+}
+function hasUnlockedOppCards(me) {
+  for (var p = 0; p < G.n; p++) {
+    if (p === me || handLocked(p)) continue;
+    if (G.players[p].slots.some(function(c) { return !!c; })) return true;
+  }
+  return false;
+}
+function matchRankForDump() {
+  if (!G) return null;
+  var top = pileTop();
+  if (G.phase === "chain" && G.chainRank) return G.chainRank;
+  if (G.phase === "dumpGive" && G.dumpGive) return G.dumpGive.rank;
+  if (G.phase === "act" && top) return top.r;
+  if (G.phase === "draw" && G.free && top) return top.r;
+  if (G.phase === "pick" && G.intent === "discard" && top) return top.r;
+  return null;
+}
+function addDumpPicks(actor) {
+  var rank = matchRankForDump();
+  if (!rank || actor == null) return;
+  // Opponent cards are dump targets (except locked declarer): match = success, wrong = take theirs + keep center
+  for (var p = 0; p < G.n; p++) {
+    if (p === actor || handLocked(p)) continue;
+    var slots = G.players[p].slots;
+    for (var i = 0; i < slots.length; i++) {
+      var c = slots[i];
+      if (c) {
+        var key = p + ":" + i;
+        if (G.pick.indexOf(key) < 0) G.pick.push(key);
+      }
+    }
+  }
+}
+function refreshActDumpPicks() {
+  if (!G || cpu()) return;
+  if (G.phase === "act" || (G.phase === "draw" && G.free && G.declarer === null)) {
+    G.pick = [];
+    addDumpPicks(G.turn);
+  }
+}
+function placeCardInHand(pid, card, preferI) {
+  var slots = G.players[pid].slots;
+  if (preferI != null && preferI >= 0 && preferI < slots.length && !slots[preferI]) {
+    slots[preferI] = card;
+    return preferI;
+  }
+  for (var ei = 0; ei < slots.length; ei++) if (!slots[ei]) { slots[ei] = card; return ei; }
+  slots.push(card);
+  return slots.length - 1;
+}
+function startDumpGive(actor, oppPid, emptiedI, rank) {
+  G.dumpGive = { actor: actor, oppPid: oppPid, emptiedI: emptiedI, rank: rank };
+  G.phase = "dumpGive";
+  G.intent = null;
+  G.pick = [];
+  var slots = G.players[actor].slots;
+  for (var i = 0; i < slots.length; i++) if (slots[i]) G.pick.push(actor + ":" + i);
+  // keep G.free so next can Pick dumped center after turn
+  say("Give them a card — tap one of yours to hand over to " + G.players[oppPid].name + ".");
+  render();
+  if (!hot && actor === 1) cpuSoon(cpuDumpGive, 450);
+}
+function completeDumpGive(giveI) {
+  var dg = G.dumpGive;
+  if (!dg) return;
+  var actor = dg.actor;
+  var card = G.players[actor].slots[giveI];
+  if (!card) return;
+  G.players[actor].slots[giveI] = null;
+  // The received dump-give card stays face-down for every human/player UI.
+  card.known = Array(G.n).fill(false);
+  var receivedI = placeCardInHand(dg.oppPid, card, dg.emptiedI);
+  // Preserve only the CPU's private memory; seat 0 never renders known[1].
+  if (!hot && mode === "local" && actor === cpuId()) {
+    var received = G.players[dg.oppPid].slots[receivedI];
+    if (received) received.known[cpuId()] = true;
+  }
+  var rank = dg.rank;
+  var oppName = G.players[dg.oppPid].name;
+  G.dumpGive = null;
+  say("Gave a card to " + oppName + ". One match action done — turn ends.");
+  beginChain(actor, rank);
+}
+function tryDumpOpponent(pid, i) {
+  var actor = G.turn;
+  if (pid === actor || handLocked(pid)) return false;
+  var rank = matchRankForDump();
+  if (!rank) return false;
+  var key = pid + ":" + i;
+  if (G.pick.indexOf(key) < 0) return false;
+  var card = G.players[pid].slots[i];
+  if (!card) return false;
+  if (card.r !== rank) {
+    wrongOppDumpKeepBoth(actor, pid, i);
+    return true;
+  }
+  var hasGive = G.players[actor].slots.some(function(c) { return !!c; });
+  if (!hasGive) { say("Need a card to give them after dumping."); return false; }
+  G.players[pid].slots[i] = null;
+  G.pile.push(card);
+  G.free = true; // dumped center Pickable by next after turn
+  say("Dumped " + label(card) + " from " + G.players[pid].name + " onto the center.");
+  startDumpGive(actor, pid, i, rank);
+  return true;
+}
+function wrongOppDumpKeepBoth(actor, oppPid, slotI) {
+  var card = G.players[oppPid].slots[slotI];
+  var drawn = pileTop();
+  if (!card || !drawn) return;
+  G.free = false;
+  G.intent = null;
+  G.pick = [];
+  G.chainPid = null;
+  G.chainRank = null;
+  G.dumpGive = null;
+  G.players[oppPid].slots[slotI] = null;
+  var taken = {r:card.r, s:card.s, known:[]};
+  var kept = {r:drawn.r, s:drawn.s, known:[]};
+  for (var k = 0; k < G.n; k++) { taken.known.push(false); kept.known.push(false); }
+  taken.known[actor] = true;
+  kept.known[actor] = true;
+  // Local AI saw public center card
+  if (!hot && mode === "local") kept.known[1] = true;
+  var handI = placeDrawnInHand(actor, taken);
+  var placedI = placeDrawnInHand(actor, kept);
+  G.pile.pop();
+  G.phase = "keepBoth";
+  G.keepBoth = { pid: actor, handI: handI, placedI: placedI, priorHandKnown: false };
+  say("Wrong opponent dump. You take " + label(card) + " and keep " + label(drawn) + " — remember where they are.");
+  render();
+  clearKeepBothTimer();
+  keepBothTimer = setTimeout(function() {
+    if (!G || hot || G.phase !== "keepBoth") return;
+    endKeepBothReveal();
+  }, KEEP_BOTH_MS);
+}
+function render() {
+  if (mode === "online") return renderOnline();
+  var memorizing = G.phase === "memorize";
+  var viewer = hot ? G.turn : 0;
+  if (memorizing) {
+    var myReady = !!(G.memorizeReady && G.memorizeReady[viewer]);
+    var readyN = (G.memorizeReady || []).filter(Boolean).length;
+    setMemorizeBar(true, "Memorize your bottom two cards. Ready: " + readyN + "/" + G.n, myReady);
+    document.getElementById("who").textContent = "Memorize phase";
+    disablePlayButtons(true);
+    document.getElementById("confirmTrade").style.display = "none";
+    document.getElementById("skipTrade").style.display = "none";
+    document.getElementById("passChain").style.display = "none";
+  } else {
+    setMemorizeBar(false);
+    document.getElementById("who").textContent = G.phase === "reveal" ? "Round over" : (G.players[G.turn].name + (G.declarer !== null ? " · final (declarer locked)" : ""));
+    document.getElementById("draw").disabled = G.phase !== "draw" || cpu();
+    document.getElementById("claim").disabled = !canPick();
+    document.getElementById("call").disabled = G.phase !== "draw" || G.declarer !== null || cpu();
+    if (G.phase === "power" || G.phase === "keepBoth" || G.phase === "peekReveal" || G.phase === "dumpGive") {
+      document.getElementById("draw").disabled = true;
+      document.getElementById("claim").disabled = true;
+      document.getElementById("call").disabled = true;
+      document.getElementById("leave").disabled = true;
+      document.getElementById("swap").disabled = true;
+      document.getElementById("discard").disabled = true;
+      document.getElementById("power").disabled = true;
+    }
+    var pc = document.getElementById("passChain");
+    if (G.phase === "chain") {
+      pc.style.display = "";
+      pc.disabled = !!cpu();
+      document.getElementById("draw").disabled = true;
+      document.getElementById("claim").disabled = true;
+      document.getElementById("call").disabled = true;
+      document.getElementById("leave").disabled = true;
+      document.getElementById("swap").disabled = true;
+      document.getElementById("discard").disabled = true;
+      document.getElementById("power").disabled = true;
+    } else if (G.phase === "dumpGive") {
+      pc.style.display = "none";
+      pc.disabled = true;
+      document.getElementById("draw").disabled = true;
+      document.getElementById("claim").disabled = true;
+      document.getElementById("call").disabled = true;
+      document.getElementById("leave").disabled = true;
+      document.getElementById("swap").disabled = true;
+      document.getElementById("discard").disabled = true;
+      document.getElementById("power").disabled = true;
+    } else {
+      pc.style.display = "none";
+      pc.disabled = true;
+    }
+    refreshActDumpPicks();
+    var acting = G.phase === "act" && !cpu();
+    var matchFree = canPick();
+    document.getElementById("leave").disabled = !acting;
+    document.getElementById("swap").disabled = !acting;
+    document.getElementById("discard").disabled = !(acting || matchFree);
+    var topCard = pileTop();
+    var canPower = acting && topCard && isPowerRank(topCard.r);
+    if (canPower && topCard.r !== "10" && !hasUnlockedOppCards(G.turn)) canPower = false;
+    document.getElementById("power").disabled = !canPower;
+    document.getElementById("power").style.display = "";
+    var canKingTrade = G.phase === "power" && G.powerStep === "k-trade";
+    var conf = document.getElementById("confirmTrade");
+    var skip = document.getElementById("skipTrade");
+    conf.style.display = canKingTrade ? "" : "none";
+    conf.disabled = !(canKingTrade && !cpu());
+    skip.style.display = canKingTrade ? "" : "none";
+    skip.disabled = !(canKingTrade && !cpu());
+  }
+  document.getElementById("deck").textContent = (!memorizing && G.free && pileTop()) ? "Pick available (passed/discarded): " + label(pileTop()) : "";
+  var center = document.getElementById("center");
+  center.innerHTML = "";
+  if (!memorizing) {
+    var pile = document.createElement("div");
+    pile.className = "pile";
+    if (G.pile.length > 1) {
+      var under = cardEl(G.pile[G.pile.length - 2], true, false);
+      under.style.left = "0"; under.style.top = "12px";
+      pile.appendChild(under);
+    }
+    var face = cardEl(pileTop(), true, false);
+    face.style.left = "18px"; face.style.top = "0";
+    pile.appendChild(face);
+    center.appendChild(pile);
+  }
+  var seats = document.getElementById("seats");
+  seats.innerHTML = "";
+  for (var p = 0; p < G.players.length; p++) {
+    var player = G.players[p];
+    var seat = document.createElement("div");
+    seat.className = "seat" + (!memorizing && player.id === G.turn ? " on" : "") + (player.declared ? " locked" : "");
+    var readyTag = "";
+    if (memorizing && G.memorizeReady) readyTag = G.memorizeReady[player.id] ? " · ready" : " · memorizing";
+    seat.innerHTML = "<h3>" + player.name + (player.declared ? " · declared (locked)" : "") + readyTag + (G.phase === "reveal" ? " · " + score(player) : "") + "</h3>";
+    var grid = document.createElement("div");
+    grid.className = "grid";
+    grid.style.gridTemplateColumns = "repeat(" + Math.max(G.cols, Math.ceil(player.slots.length / 2)) + ", 72px)";
+    for (var i = 0; i < player.slots.length; i++) {
+      var c = player.slots[i];
+      var isBottomTwo = i >= G.cols && i < G.cols + 2;
+      var memorizeReveal = memorizing && player.id === viewer && isBottomTwo;
+      var known = c && (G.phase === "reveal" || c.known[viewer] || memorizeReveal);
+      var el = cardEl(c, known, !memorizing && (G.phase === "pick" || G.phase === "power" || G.phase === "chain" || G.phase === "dumpGive" || G.phase === "act" || (G.phase === "draw" && G.free)) && G.pick && G.pick.indexOf(player.id + ":" + i) >= 0);
+      el.setAttribute("data-p", player.id);
+      el.setAttribute("data-i", i);
+      el.onclick = memorizing ? null : onCard;
+      grid.appendChild(el);
+    }
+    seat.appendChild(grid);
+    seats.appendChild(seat);
+  }
+}
+function cardEl(c, known, pick) {
+  var el = document.createElement("button");
+  el.type = "button";
+  el.className = "card";
+  if (!c || c.hidden) {
+    if (!c) { el.textContent = "·"; return el; }
+    el.className += " back"; el.textContent = "??"; return el;
+  }
+  if (!known) { el.className += " back"; el.textContent = "??"; }
+  else { el.textContent = label(c); if (c.s === "H" || c.s === "D") el.className += " red"; el.className += " known"; }
+  if (pick) el.className += " pick";
+  return el;
+}
+function score(p) { var s = 0; for (var i = 0; i < p.slots.length; i++) if (p.slots[i]) s += val(p.slots[i]); return s; }
+function cpu() { return !hot && G && G.turn === 1 && G.phase !== "reveal" && G.phase !== "memorize" && G.phase !== "keepBoth" && G.phase !== "peekReveal" && G.phase !== "dumpGive"; }
+function drawCard() {
+  try {
+    if (!G || G.phase !== "draw" || cpu()) return;
+    if (!G.deck.length) return reveal();
+    G.free = false;
+    var card = G.deck.pop();
+    G.pile.push(card);
+    G.phase = "act";
+    G.pick = [];
+    addDumpPicks(G.turn);
+    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center).");
+    render();
+  } catch (e) { err(e.message); }
+}
+function pass() {
+  if (!G || G.phase !== "act" || cpu()) return;
+  G.free = true;
+  say("Passed. " + label(pileTop()) + " stays in the center — next player can Pick it or Discard a match.");
+  finish();
+}
+function armPick() {
+  if (!canPick()) return;
+  G.intent = "claim";
+  G.phase = "pick";
+  G.pick = [];
+  var slots = G.players[G.turn].slots;
+  for (var i = 0; i < slots.length; i++) if (slots[i]) G.pick.push(G.turn + ":" + i);
+  say("Pick " + label(pileTop()) + ": tap the card in your hand you are giving up.");
+  render();
+}
+function arm(intent) {
+  if (!G || cpu()) return;
+  if (G.phase === "act") { }
+  else if (intent === "discard" && canPick()) { }
+  else return;
+  G.intent = intent;
+  G.phase = "pick";
+  G.pick = [];
+  var slots = G.players[G.turn].slots;
+  for (var i = 0; i < slots.length; i++) if (slots[i]) G.pick.push(G.turn + ":" + i);
+  if (intent === "discard") addDumpPicks(G.turn);
+  say(intent === "discard"
+    ? "Tap a matching card (yours or an opponent " + pileTop().r + "). Wrong own/opponent card: you keep both / take theirs+center."
+    : "Tap the card you are giving up.");
+  render();
+}
+function placeDrawnInHand(pid, card) {
+  var slots = G.players[pid].slots;
+  var empty = -1;
+  for (var ei = 0; ei < slots.length; ei++) if (!slots[ei]) { empty = ei; break; }
+  if (empty >= 0) { slots[empty] = card; return empty; }
+  slots.push(card);
+  return slots.length - 1;
+}
+function clearKeepBothTimer() {
+  if (keepBothTimer) { clearTimeout(keepBothTimer); keepBothTimer = null; }
+}
+function clearPeekTimer() {
+  if (peekTimer) { clearTimeout(peekTimer); peekTimer = null; }
+}
+function startPeekReveal(peeker, targetPid, i, next, prefix) {
+  var card = G.players[targetPid].slots[i];
+  if (!card) return;
+  var priorKnown = !!card.known[peeker];
+  card.known[peeker] = true;
+  G.phase = "peekReveal";
+  G.peekReveal = { peeker: peeker, targetPid: targetPid, i: i, next: next, priorKnown: priorKnown };
+  G.pick = [];
+  say((prefix || "Peeked ") + label(card) + ". Memorize it — it flips face-down again.");
+  render();
+  clearPeekTimer();
+  peekTimer = setTimeout(function() {
+    if (!G || hot || G.phase !== "peekReveal") return;
+    endPeekReveal();
+  }, PEEK_MS);
+}
+function endPeekReveal() {
+  if (!G || G.phase !== "peekReveal" || !G.peekReveal) return;
+  clearPeekTimer();
+  var pr = G.peekReveal;
+  var card = G.players[pr.targetPid] && G.players[pr.targetPid].slots[pr.i];
+  // Peek is temporary for UI — restore only pre-existing knowledge
+  if (card) card.known[pr.peeker] = !!pr.priorKnown;
+  // Local AI: if computer peeked, keep AI memory (known[1] does not face-up for human)
+  if (!hot && mode === "local" && pr.peeker === cpuId() && card) {
+    card.known[cpuId()] = true;
+  }
+  G.peekReveal = null;
+  if (pr.next === "k-peek-opp") {
+    G.phase = "power";
+    G.powerStep = "k-peek-opp";
+    G.powerMine = { pid: pr.targetPid, i: pr.i };
+    G.pick = [];
+    fillPowerPicks();
+    if (!G.pick.length) {
+      say("No opponent card to peek — King power ends. K stays pickable for next.");
+      G.free = true; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+      finish();
+      return;
+    }
+    say("Memorize your card. Now tap one opponent card to peek.");
+    render();
+    if (!hot && pr.peeker === cpuId()) cpuSoon(cpuPowerStep, 400);
+    return;
+  }
+  if (pr.next === "k-trade") {
+    G.phase = "power";
+    G.powerStep = "k-trade";
+    G.powerTarget = { pid: pr.targetPid, i: pr.i };
+    G.pick = [];
+    say("Memorize both peeks. Trade (swap those two cards) or Skip trade.");
+    render();
+    if (!hot && pr.peeker === cpuId()) cpuSoon(cpuKingTradeDecide, 400);
+    return;
+  }
+  G.free = false;
+  G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+  finish();
+}
+function endKeepBothReveal() {
+  if (!G || G.phase !== "keepBoth" || !G.keepBoth) return;
+  clearKeepBothTimer();
+  var kb = G.keepBoth;
+  var hand = G.players[kb.pid].slots[kb.handI];
+  var kept = G.players[kb.pid].slots[kb.placedI];
+  // Flip face-down after brief reveal; restore any prior knowledge on the clicked hand card
+  if (hand) hand.known[kb.pid] = !!kb.priorHandKnown;
+  if (kept) kept.known[kb.pid] = false;
+  G.keepBoth = null;
+  finish();
+}
+function wrongDiscardKeepBoth(pid, slotI) {
+  var card = G.players[pid].slots[slotI];
+  var drawn = pileTop();
+  if (!card || !drawn) return;
+  G.free = false;
+  G.intent = null;
+  G.pick = [];
+  G.chainPid = null;
+  G.chainRank = null;
+  G.dumpGive = null;
+  var priorHandKnown = !!card.known[pid];
+  var extra = {r:drawn.r, s:drawn.s, known:[]};
+  for (var k = 0; k < G.n; k++) extra.known.push(false);
+  // Briefly face-up for the acting player so they know where both landed
+  card.known[pid] = true;
+  extra.known[pid] = true;
+  // Local AI saw the public center card — remember that slot (separate from owner flash)
+  if (!hot && mode === "local") extra.known[1] = true;
+  var placedI = placeDrawnInHand(pid, extra);
+  G.pile.pop();
+  G.phase = "keepBoth";
+  G.keepBoth = { pid: pid, handI: slotI, placedI: placedI, priorHandKnown: priorHandKnown };
+  say("Not a match. You keep " + label(drawn) + " and " + label(card) + " — remember where they are.");
+  render();
+  clearKeepBothTimer();
+  keepBothTimer = setTimeout(function() {
+    if (!G || hot || G.phase !== "keepBoth") return;
+    endKeepBothReveal();
+  }, KEEP_BOTH_MS);
+}
+function swapIntoHand(pid, i) {
+  var card = G.players[pid].slots[i];
+  var drawn = pileTop();
+  // Swapped-in center cards stay face-down in hand (unknown to everyone including owner)
+  var taken = {r:drawn.r, s:drawn.s, known:[]};
+  for (var k2 = 0; k2 < G.n; k2++) taken.known.push(false);
+  G.players[pid].slots[i] = taken;
+  G.pile[G.pile.length - 1] = card;
+  G.free = false;
+  return taken;
+}
+function onCard(ev) {
+  try {
+    var pid = Number(ev.currentTarget.getAttribute("data-p"));
+    var i = Number(ev.currentTarget.getAttribute("data-i"));
+    if (G.phase === "keepBoth" || G.phase === "peekReveal") return;
+    if (G.phase === "power") { onPowerCard(pid, i); return; }
+    if (G.phase === "dumpGive") {
+      if (pid !== G.turn || G.pick.indexOf(pid + ":" + i) < 0) return;
+      return completeDumpGive(i);
+    }
+    if (G.phase === "act" || (G.phase === "draw" && G.free)) {
+      if (tryDumpOpponent(pid, i)) return;
+    }
+    if (G.phase === "chain") {
+      // Post-swap one-shot match only. After this action, turn ends (no multi-chain).
+      if (G.pick.indexOf(pid + ":" + i) < 0) return;
+      if (pid !== G.turn) {
+        if (tryDumpOpponent(pid, i)) return;
+        return;
+      }
+      var ch = G.players[pid].slots[i];
+      if (!ch || ch.r !== G.chainRank) return;
+      G.players[pid].slots[i] = null;
+      G.pile.push(ch);
+      G.free = true;
+      say("Discarded matching " + label(ch) + " after swap. Turn ends; next can Pick it.");
+      G.pick = []; G.chainPid = null; G.chainRank = null;
+      return finish();
+    }
+    if (G.phase !== "pick" || G.pick.indexOf(pid + ":" + i) < 0) return;
+    if (G.intent === "discard" && pid !== G.turn) {
+      if (tryDumpOpponent(pid, i)) return;
+      return;
+    }
+    var card = G.players[pid].slots[i];
+    var drawn = pileTop();
+    if (G.intent === "discard") {
+      if (card.r === drawn.r) {
+        G.players[pid].slots[i] = null;
+        G.pile.push(card);
+        G.free = true; // discarded top Pickable by next
+        say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
+        return beginChain(pid, card.r);
+      }
+      // Wrong rank: no do-over — keep both cards, brief reveal, end turn
+      return wrongDiscardKeepBoth(pid, i);
+    }
+    var taken = swapIntoHand(pid, i);
+    // Local AI remembers the face-up center card that entered a hand (known[1] does not face-up for human viewer)
+    if (!hot && mode === "local") taken.known[1] = true;
+    var dumped = G.pile[G.pile.length - 1];
+    say((G.intent === "claim" ? "Picked " : "Swapped in ") + label(taken) + " — " + label(dumped) + " on center.");
+    beginChain(pid, dumped.r, true);
+  } catch (e) { err(e.message); }
+}
+
+
+// One discard/dump per turn overall. After swap/pick only: allowOne offers a single
+// matching discard/dump of the rank put on center, then ends (no multi-chain).
+function beginChain(pid, rank, allowOne) {
+  G.intent = null;
+  G.pick = [];
+  G.dumpGive = null;
+  G.chainPid = null;
+  G.chainRank = null;
+  if (pileTop()) G.free = true; // discarded/dumped/swapped top Pickable for next
+  if (!allowOne) return finish();
+
+  var hasOwn = G.players[pid].slots.some(function(c) { return c && c.r === rank; });
+  if (!hasOwn) return finish();
+
+  G.phase = "chain";
+  G.chainPid = pid;
+  G.chainRank = rank;
+  for (var i = 0; i < G.players[pid].slots.length; i++) {
+    var c = G.players[pid].slots[i];
+    if (c && c.r === rank) G.pick.push(pid + ":" + i);
+  }
+  addDumpPicks(pid);
+  say("You put " + rank + " on center — discard one matching " + rank + " from hand (or dump an opponent " + rank + "), or Done. One only — not a chain.");
+  render();
+  if (!hot && G.chainPid === 1) cpuSoon(cpuChainPlay, 450);
+}
+function passChain() {
+  if (!G || G.phase !== "chain") return;
+  G.pick = []; G.chainPid = null; G.chainRank = null;
+  if (pileTop()) G.free = true;
+  say("Done — skipped extra match after swap. Next can Pick center.");
+  finish();
+}
+
+function startPower() {
+  if (!G || G.phase !== "act" || cpu()) return;
+  var top = pileTop();
+  if (!top || !isPowerRank(top.r)) return;
+  var needsOpp = top.r === "J" || top.r === "Q" || top.r === "K";
+  if (needsOpp && !hasUnlockedOppCards(G.turn)) {
+    say("Declarer's hand is locked — no J/Q/K target available. Pass, discard, or swap instead.");
+    render();
+    return;
+  }
+  G.power = top.r;
+  G.phase = "power";
+  G.powerStep = top.r === "10" ? "peek-own" : top.r === "J" ? "peek-opp" : top.r === "Q" ? "q-mine" : "k-peek-own";
+  G.powerTarget = null;
+  G.powerMine = null;
+  G.pick = [];
+  fillPowerPicks();
+  say(powerHint(top.r) + " Tap a highlighted card.");
+  render();
+}
+function fillPowerPicks() {
+  G.pick = [];
+  var me = G.turn;
+  if (G.powerStep === "peek-own" || G.powerStep === "q-mine" || G.powerStep === "k-peek-own") {
+    G.players[me].slots.forEach(function(c, i) { if (c) G.pick.push(me + ":" + i); });
+  }
+  if (G.powerStep === "peek-opp" || G.powerStep === "q-theirs" || G.powerStep === "k-peek-opp") {
+    for (var p = 0; p < G.n; p++) {
+      if (p === me || handLocked(p)) continue;
+      G.players[p].slots.forEach(function(c, i) { if (c) G.pick.push(p + ":" + i); });
+    }
+  }
+  // k-trade: Trade / Skip buttons only
+}
+function skipKingTrade() {
+  if (!G || G.phase !== "power" || G.powerStep !== "k-trade") return;
+  // After Use power on K, K stays on center pickable for next (same as Pass)
+  G.free = true;
+  // Peeks were temporary UI; AI memory already kept in endPeekReveal for peeker seat only
+  say("Skipped trade. K stays pickable for next.");
+  G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+  finish();
+}
+function confirmKingTrade() {
+  if (!G || G.phase !== "power" || G.powerStep !== "k-trade") return;
+  var mine = G.powerMine;
+  var opp = G.powerTarget;
+  if (!mine || !opp) return;
+  var myCard = G.players[mine.pid].slots[mine.i];
+  var oppCard = G.players[opp.pid].slots[opp.i];
+  if (!myCard || !oppCard) {
+    say("Trade failed — a peeked card is gone. K stays pickable for next.");
+    G.free = true; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+    finish();
+    return;
+  }
+  var me = G.turn;
+  G.players[mine.pid].slots[mine.i] = oppCard;
+  G.players[opp.pid].slots[opp.i] = myCard;
+  G.players[mine.pid].slots[mine.i].known = Array(G.n).fill(false);
+  G.players[opp.pid].slots[opp.i].known = Array(G.n).fill(false);
+  // Local AI: peeker remembers both cards after the swap (peeker seat only)
+  if (!hot && mode === "local" && me === cpuId()) {
+    cpuRememberKingTrade(me, mine.i, opp.pid, opp.i);
+  }
+  // Vague log — do not reveal which cards moved; K remains pickable for next
+  say(G.players[me].name + " traded after King peeks. K stays pickable for next.");
+  G.free = true; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+  finish();
+}
+function onPowerCard(pid, i) {
+  var key = pid + ":" + i;
+  if (G.pick.indexOf(key) < 0) return false;
+  var me = G.turn;
+  if (G.powerStep === "peek-own") {
+    // AI: store memory instantly (known[1] does not face-up for human). Human: brief reveal then ??
+    if (!hot && me === cpuId()) {
+      G.players[pid].slots[i].known[me] = true;
+      say("Computer peeked own card.");
+      G.free = false; G.power = null; G.powerStep = null; G.pick = [];
+      finish();
+      return true;
+    }
+    startPeekReveal(me, pid, i, "finish", "Peeked your card: ");
+    G.power = null; G.powerStep = null;
+    return true;
+  }
+  if (G.powerStep === "peek-opp") {
+    if (handLocked(pid)) return false;
+    if (!hot && me === cpuId()) {
+      G.players[pid].slots[i].known[me] = true;
+      say("Computer peeked an opponent card.");
+      G.free = false; G.power = null; G.powerStep = null; G.pick = [];
+      finish();
+      return true;
+    }
+    startPeekReveal(me, pid, i, "finish", "Peeked opponent card: ");
+    G.power = null; G.powerStep = null;
+    return true;
+  }
+  if (G.powerStep === "q-mine") {
+    G.powerTarget = { pid: pid, i: i };
+    G.powerStep = "q-theirs";
+    G.pick = [];
+    fillPowerPicks();
+    if (!G.pick.length) {
+      say("Declarer's hand is locked — no trade target. Power cancelled.");
+      G.free = false; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+      finish();
+      return true;
+    }
+    say("Blind trade: tap an opponent card to swap with.");
+    render();
+    return true;
+  }
+  if (G.powerStep === "q-theirs") {
+    if (handLocked(pid)) return false;
+    var a = G.powerTarget;
+    var mine = G.players[a.pid].slots[a.i];
+    var theirs = G.players[pid].slots[i];
+    // Blind for humans: clear face-up knowledge. Local AI keeps memory only for cards it already knew.
+    var cpuKnewMine = !hot && mode === "local" && !!(mine && mine.known[cpuId()]);
+    var cpuKnewTheirs = !hot && mode === "local" && !!(theirs && theirs.known[cpuId()]);
+    G.players[a.pid].slots[a.i] = theirs;
+    G.players[pid].slots[i] = mine;
+    G.players[a.pid].slots[a.i].known = Array(G.n).fill(false);
+    G.players[pid].slots[i].known = Array(G.n).fill(false);
+    if (cpuKnewTheirs && G.players[a.pid].slots[a.i]) G.players[a.pid].slots[a.i].known[cpuId()] = true;
+    if (cpuKnewMine && G.players[pid].slots[i]) G.players[pid].slots[i].known[cpuId()] = true;
+    say("Blind-traded with " + G.players[pid].name + ".");
+    G.free = false; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+    finish();
+    return true;
+  }
+  if (G.powerStep === "k-peek-own") {
+    if (pid !== me) return false;
+    if (!hot && me === cpuId()) {
+      // AI memory only (known[cpu] never face-up for human); no label leak in log
+      G.players[pid].slots[i].known[me] = true;
+      G.powerMine = { pid: pid, i: i };
+      G.powerStep = "k-peek-opp";
+      G.pick = [];
+      fillPowerPicks();
+      if (!G.pick.length) {
+        say("Computer King power ends — no opponent card to peek. K stays pickable for next.");
+        G.free = true; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+        finish();
+        return true;
+      }
+      say("Computer peeked its own card (King). Peeking an opponent card…");
+      render();
+      cpuSoon(cpuPowerStep, 450);
+      return true;
+    }
+    startPeekReveal(me, pid, i, "k-peek-opp", "Peeked your card: ");
+    return true;
+  }
+  if (G.powerStep === "k-peek-opp") {
+    if (handLocked(pid)) return false;
+    if (!hot && me === cpuId()) {
+      G.players[pid].slots[i].known[me] = true;
+      G.powerTarget = { pid: pid, i: i };
+      G.powerStep = "k-trade";
+      G.pick = [];
+      say("Computer peeked an opponent card (King). Deciding trade…");
+      render();
+      cpuSoon(cpuKingTradeDecide, 500);
+      return true;
+    }
+    startPeekReveal(me, pid, i, "k-trade", "Peeked opponent card: ");
+    return true;
+  }
+  // k-trade uses Trade / Skip buttons
+  return false;
+}
+
+function declareRound() {
+  if (!G || G.phase !== "draw" || G.declarer !== null || cpu()) return;
+  G.players[G.turn].declared = true;
+  G.declarer = G.turn;
+  G.queue = [];
+  for (var i = 0; i < G.n; i++) if (i !== G.turn) G.queue.push(i);
+  say(G.players[G.turn].name + " declared. Their hand is locked — no dumps, peeks, or trades against it. Final turns: draw/discard/pick on your own hand & center only.");
+  next();
+}
+function finish() {
+  G.pick = [];
+  G.intent = null;
+  G.dumpGive = null;
+  G.chainPid = null;
+  G.chainRank = null;
+  if (G.declarer !== null) G.queue = G.queue.filter(function(id){ return id !== G.turn; });
+  // Local AI: if a discard/dump just emptied the computer hand, declare before advancing.
+  if (cpuTryDeclareAfterEmptyHand()) return;
+  next();
+}
+function next() {
+  if (G.declarer !== null && !G.queue.length) return reveal();
+  G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
+  G.phase = "draw";
+  refreshActDumpPicks();
+  render();
+  if (cpu()) cpuSoon(cpuTurn, 500);
+}
+function reveal() {
+  G.phase = "reveal";
+  var scores = G.players.map(score);
+  var low = Math.min.apply(null, scores);
+  var text = scores.map(function(s,i){ return G.players[i].name + " " + s; }).join(", ") + ". ";
+  var winners = [];
+  for (var wi = 0; wi < G.n; wi++) if (scores[wi] === low) winners.push(G.players[wi].name);
+  text += winners.length > 1 ? "Tie." : winners[0] + " wins.";
+  say(text);
+  render();
+}
+function cpuSoon(fn, ms) {
+  setTimeout(function() {
+    if (!G || hot || mode !== "local") return;
+    fn();
+  }, ms == null ? 500 : ms);
+}
+function cpuId() { return 1; }
+function cpuApplyMemorizeKnowledge() {
+  if (hot || !G || G.n < 2) return;
+  var slots = G.players[cpuId()].slots;
+  for (var i = G.cols; i < G.cols + 2 && i < slots.length; i++) {
+    if (slots[i]) slots[i].known[cpuId()] = true;
+  }
+}
+function cpuRemember(pid, i) {
+  var c = G.players[pid].slots[i];
+  if (c) c.known[cpuId()] = true;
+}
+function cpuKnows(pid, i) {
+  var c = G.players[pid].slots[i];
+  return !!(c && c.known[cpuId()]);
+}
+function cpuSlots(pid) { return G.players[pid].slots; }
+function cpuLiveIndices(pid) {
+  var out = [];
+  var slots = cpuSlots(pid);
+  for (var i = 0; i < slots.length; i++) if (slots[i]) out.push(i);
+  return out;
+}
+function cpuUnknownIndices(pid) {
+  return cpuLiveIndices(pid).filter(function(i) { return !cpuKnows(pid, i); });
+}
+function cpuKnownIndices(pid) {
+  return cpuLiveIndices(pid).filter(function(i) { return cpuKnows(pid, i); });
+}
+function cpuMatchIndex(pid, rank) {
+  var known = cpuKnownIndices(pid);
+  for (var k = 0; k < known.length; k++) {
+    var i = known[k];
+    if (cpuSlots(pid)[i].r === rank) return i;
+  }
+  return -1;
+}
+function cpuWorstKnown(pid) {
+  var bestI = -1, bestV = -999;
+  cpuKnownIndices(pid).forEach(function(i) {
+    var v = val(cpuSlots(pid)[i]);
+    if (v > bestV) { bestV = v; bestI = i; }
+  });
+  return bestI;
+}
+function cpuBestKnown(pid) {
+  var bestI = -1, bestV = 999;
+  cpuKnownIndices(pid).forEach(function(i) {
+    var v = val(cpuSlots(pid)[i]);
+    if (v < bestV) { bestV = v; bestI = i; }
+  });
+  return bestI;
+}
+function cpuEstScore(pid) {
+  var slots = cpuSlots(pid), s = 0, unk = 0;
+  for (var i = 0; i < slots.length; i++) {
+    var c = slots[i];
+    if (!c) continue;
+    if (c.known[cpuId()]) s += val(c);
+    else { s += 6; unk++; }
+  }
+  return { score: s, unknown: unk, cards: cpuLiveIndices(pid).length };
+}
+function cpuChance(p) { return Math.random() < p; }
+function cpuMarkSwapIn(pid, i) {
+  // Owner saw the face-up center card before swapping it in
+  if (pid === cpuId()) cpuRemember(pid, i);
+}
+function cpuClaimIfUseful() {
+  if (!G.free || !pileTop()) return false;
+  var taken = pileTop();
+  if (val(taken) > 4) return false;
+  var worst = cpuWorstKnown(cpuId());
+  if (worst < 0) return false;
+  var worstVal = val(cpuSlots(cpuId())[worst]);
+  if (worstVal <= val(taken)) return false;
+  var dumped = cpuSlots(cpuId())[worst];
+  swapIntoHand(cpuId(), worst);
+  cpuMarkSwapIn(cpuId(), worst);
+  say("Computer picked " + label(taken) + " from the center (passed/discarded).");
+  beginChain(cpuId(), dumped.r, true);
+  return true;
+}
+function cpuHandEmpty(pid) {
+  // Null/empty slots are holes — only real cards count toward "has cards".
+  return cpuLiveIndices(pid).length === 0;
+}
+function cpuDoDeclare() {
+  G.players[cpuId()].declared = true;
+  G.declarer = cpuId();
+  G.queue = [];
+  for (var i = 0; i < G.n; i++) if (i !== cpuId()) G.queue.push(i);
+  say("Computer declared. Their hand is locked — no dumps, peeks, or trades against it. Final turns: draw/discard/pick on your own hand & center only.");
+  next();
+  return true;
+}
+function cpuMaybeDeclare() {
+  if (!G || G.phase !== "draw" || G.declarer !== null) return false;
+  // Zero cards (null holes do not count): declare immediately while allowed.
+  if (cpuHandEmpty(cpuId())) return cpuDoDeclare();
+  var me = cpuEstScore(cpuId());
+  var opp = cpuEstScore(0);
+  // Need decent self-knowledge and a clear lead
+  if (me.unknown > Math.max(1, Math.floor(me.cards / 2))) return false;
+  if (me.score > opp.score - 2) return false;
+  if (me.score > 10) return false;
+  if (!cpuChance(me.score <= opp.score - 5 ? 0.85 : 0.45)) return false;
+  return cpuDoDeclare();
+}
+function cpuTryDeclareAfterEmptyHand() {
+  // After a discard/dump empties the computer hand, declare as soon as legal.
+  if (!G || hot || mode !== "local" || G.declarer !== null) return false;
+  if (G.turn !== cpuId()) return false;
+  if (!cpuHandEmpty(cpuId())) return false;
+  G.phase = "draw";
+  G.chainPid = null;
+  G.chainRank = null;
+  G.intent = null;
+  G.pick = [];
+  G.dumpGive = null;
+  return cpuMaybeDeclare();
+}
+function cpuTurn() {
+  if (!cpu() || G.phase !== "draw") return;
+  if (cpuMaybeDeclare()) return;
+  if (G.free && pileTop()) {
+    var freeRank = pileTop().r;
+    var freeOpp = cpuTargetableOpp();
+    var freeDump = freeOpp >= 0 ? cpuMatchIndex(freeOpp, freeRank) : -1;
+    if (freeDump >= 0 && cpuLiveIndices(cpuId()).length > 0) {
+      if (cpuDoDump(freeOpp, freeDump, freeRank)) return;
+    }
+  }
+  if (cpuClaimIfUseful()) return;
+  if (!G.deck.length) return reveal();
+  G.free = false;
+  var drawn = G.deck.pop();
+  G.pile.push(drawn);
+  G.phase = "act";
+  say("Computer drew " + label(drawn) + ".");
+  render();
+  cpuSoon(cpuAct, 550);
+}
+function cpuPickGiveAway() {
+  var me = cpuId();
+  var worst = cpuWorstKnown(me);
+  if (worst >= 0 && val(G.players[me].slots[worst]) >= 6) return worst;
+  var unk = cpuUnknownIndices(me);
+  if (unk.length) return unk[Math.floor(Math.random() * unk.length)];
+  if (worst >= 0) return worst;
+  var live = cpuLiveIndices(me);
+  return live.length ? live[0] : -1;
+}
+function cpuTargetableOpp() {
+  for (var p = 0; p < G.n; p++) {
+    if (p === cpuId() || handLocked(p)) continue;
+    if (cpuLiveIndices(p).length) return p;
+  }
+  return -1;
+}
+function cpuDoDump(oppPid, slotI, rank) {
+  var me = cpuId();
+  if (handLocked(oppPid)) return false;
+  // Never read opponent rank unless AI already knows that slot
+  if (!cpuKnows(oppPid, slotI)) return false;
+  var card = G.players[oppPid].slots[slotI];
+  if (!card || card.r !== rank) return false;
+  G.players[oppPid].slots[slotI] = null;
+  G.pile.push(card);
+  G.free = true; // dumped center Pickable after computer turn
+  say("Computer dumped your " + label(card) + " onto the center.");
+  G.dumpGive = { actor: me, oppPid: oppPid, emptiedI: slotI, rank: rank };
+  G.phase = "dumpGive";
+  G.intent = null;
+  G.pick = [];
+  G.players[me].slots.forEach(function(c, i) { if (c) G.pick.push(me + ":" + i); });
+  render();
+  cpuSoon(cpuDumpGive, 400);
+  return true;
+}
+function cpuDumpGive() {
+  if (!G || hot || G.phase !== "dumpGive" || !G.dumpGive || G.dumpGive.actor !== cpuId()) return;
+  var giveI = cpuPickGiveAway();
+  if (giveI < 0) {
+    // Nowhere to give from — end turn (one dump action already resolved on center)
+    var dg = G.dumpGive;
+    G.dumpGive = null;
+    return beginChain(cpuId(), dg.rank);
+  }
+  completeDumpGive(giveI);
+}
+function cpuAct() {
+  if (!G || hot || G.turn !== cpuId() || G.phase !== "act") return;
+  var drawn = pileTop();
+  if (!drawn) return finish();
+  var me = cpuId();
+  // ONE match action only: either dump a known opp match OR discard own match — not both
+  var actOpp = cpuTargetableOpp();
+  var oppDump = actOpp >= 0 ? cpuMatchIndex(actOpp, drawn.r) : -1;
+  if (oppDump >= 0 && cpuLiveIndices(me).length > 0) {
+    // Prefer dump when both available (exclusive — turn ends after dump-give)
+    if (cpuDoDump(actOpp, oppDump, drawn.r)) return;
+  }
+  // Discard known match (clears a card) — only if dump not taken
+  var match = cpuMatchIndex(me, drawn.r);
+  if (match >= 0) {
+    var dumpedMatch = G.players[me].slots[match];
+    G.players[me].slots[match] = null;
+    G.pile.push(dumpedMatch);
+    G.free = true; // discarded top Pickable by you next
+    say("Computer discarded a match (" + label(dumpedMatch) + ") onto " + label(drawn) + ". One match action — your turn can Pick it.");
+    return beginChain(me, dumpedMatch.r);
+  }
+  // Often use power instead of blind pass/swap
+  if (isPowerRank(drawn.r) && cpuShouldUsePower(drawn.r)) {
+    if (cpuStartPower(drawn.r)) return;
+  }
+  // Swap in low cards when dumping a known bad card (never dump known low)
+  var worst = cpuWorstKnown(me);
+  if (val(drawn) <= 4 && worst >= 0 && val(G.players[me].slots[worst]) >= 7) {
+    var leaving = G.players[me].slots[worst];
+    swapIntoHand(me, worst);
+    cpuMarkSwapIn(me, worst);
+    G.free = false;
+    say("Computer swapped in " + label(drawn) + " — " + label(leaving) + " on center.");
+    return beginChain(me, leaving.r, true);
+  }
+  // Avoid swapping away unknown if drawn is mediocre; pass
+  G.free = true;
+  say("Computer passed. " + label(drawn) + " stays in the center — you can Pick it.");
+  finish();
+}
+function cpuShouldUsePower(rank) {
+  var me = cpuId();
+  var opp = cpuTargetableOpp();
+  if (rank === "10") return cpuUnknownIndices(me).length > 0 && cpuChance(0.9);
+  if (rank === "J") return opp >= 0 && cpuChance(0.85);
+  if (rank === "Q") {
+    if (opp < 0) return false;
+    var worst = cpuWorstKnown(me);
+    if (worst >= 0 && val(G.players[me].slots[worst]) >= 8) return cpuChance(0.9);
+    if (cpuBestKnown(opp) >= 0 && val(G.players[opp].slots[cpuBestKnown(opp)]) <= 4 && worst >= 0)
+      return cpuChance(0.8);
+    // still often try a speculative trade of a mid/unknown for unknown opp
+    return worst >= 0 && cpuChance(0.55);
+  }
+  if (rank === "K") return opp >= 0 && cpuChance(0.88);
+  return false;
+}
+function cpuStartPower(rank) {
+  var needsOpp = rank === "J" || rank === "Q" || rank === "K";
+  if (needsOpp && cpuTargetableOpp() < 0) {
+    say("Computer skips " + rank + " power — declarer hand is locked.");
+    return false;
+  }
+  G.power = rank;
+  G.phase = "power";
+  G.powerStep = rank === "10" ? "peek-own" : rank === "J" ? "peek-opp" : rank === "Q" ? "q-mine" : "k-peek-own";
+  G.powerTarget = null;
+  G.powerMine = null;
+  G.pick = [];
+  fillPowerPicks();
+  say("Computer uses " + rank + " power. " + powerHint(rank));
+  render();
+  cpuSoon(cpuPowerStep, 500);
+  return true;
+}
+function endCpuPowerAbort() {
+  // King Use-power resolution leaves K on center pickable for next; other powers stay non-free
+  G.free = !!(G.power === "K" && pileTop());
+  G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+  finish();
+}
+function cpuPowerStep() {
+  if (!G || hot || G.turn !== cpuId() || G.phase !== "power") return;
+  var me = cpuId();
+  var step = G.powerStep;
+  if (step === "peek-own" || step === "k-peek-own") {
+    var unk = cpuUnknownIndices(me);
+    var pickI = unk.length ? unk[Math.floor(Math.random() * unk.length)] : cpuLiveIndices(me)[0];
+    if (pickI == null) { return endCpuPowerAbort(); }
+    onPowerCard(me, pickI);
+    return;
+  }
+  if (step === "peek-opp" || step === "k-peek-opp") {
+    var peekOpp = cpuTargetableOpp();
+    if (peekOpp < 0) { return endCpuPowerAbort(); }
+    var oppUnk = cpuUnknownIndices(peekOpp);
+    var oppLive = cpuLiveIndices(peekOpp);
+    var oi = oppUnk.length ? oppUnk[Math.floor(Math.random() * oppUnk.length)]
+      : (oppLive.length ? oppLive[Math.floor(Math.random() * oppLive.length)] : -1);
+    if (oi < 0) { return endCpuPowerAbort(); }
+    onPowerCard(peekOpp, oi);
+    return;
+  }
+  if (step === "q-mine") {
+    var give = cpuPickQGive();
+    if (give < 0) { G.free = false; G.power = null; G.powerStep = null; G.pick = []; return finish(); }
+    onPowerCard(me, give);
+    cpuSoon(cpuPowerStep, 450);
+    return;
+  }
+  if (step === "q-theirs") {
+    var qOpp = cpuTargetableOpp();
+    var take = cpuPickQTake(qOpp);
+    if (qOpp < 0 || take < 0) { G.free = false; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = []; return finish(); }
+    var giveTarget = G.powerTarget;
+    var given = giveTarget ? G.players[giveTarget.pid].slots[giveTarget.i] : null;
+    var givenRS = given ? { r: given.r, s: given.s } : null;
+    var giveI = giveTarget ? giveTarget.i : -1;
+    onPowerCard(qOpp, take);
+    // Blind for receipt, but computer knows what it handed to the opponent slot
+    if (givenRS && G.players[qOpp].slots[take]) {
+      G.players[qOpp].slots[take].known[me] = true;
+    }
+    // Own slot that received the blind card stays unknown to computer
+    if (giveI >= 0 && G.players[me].slots[giveI]) {
+      G.players[me].slots[giveI].known[me] = false;
+    }
+    return;
+  }
+}
+function cpuPickQGive() {
+  var me = cpuId();
+  var worst = cpuWorstKnown(me);
+  if (worst >= 0 && val(G.players[me].slots[worst]) >= 7) return worst;
+  // Prefer not to give away known lows — pick unknown if any, else worst known
+  var unk = cpuUnknownIndices(me);
+  if (unk.length) return unk[Math.floor(Math.random() * unk.length)];
+  return worst >= 0 ? worst : (cpuLiveIndices(me)[0] != null ? cpuLiveIndices(me)[0] : -1);
+}
+function cpuPickQTake(oppPid) {
+  if (oppPid == null || oppPid < 0) oppPid = cpuTargetableOpp();
+  if (oppPid < 0 || handLocked(oppPid)) return -1;
+  // Prefer known low opponent card, else unknown opponent slot
+  var best = cpuBestKnown(oppPid);
+  if (best >= 0 && val(G.players[oppPid].slots[best]) <= 5) return best;
+  var unk = cpuUnknownIndices(oppPid);
+  if (unk.length) return unk[Math.floor(Math.random() * unk.length)];
+  var live = cpuLiveIndices(oppPid);
+  return live.length ? live[Math.floor(Math.random() * live.length)] : -1;
+}
+function cpuRememberKingTrade(me, mySlot, oppPid, oppSlot) {
+  // onPowerCard clears known[] for UI; restore AI memory only (known[1], human viewer stays seat 0)
+  if (G.players[me].slots[mySlot]) G.players[me].slots[mySlot].known[me] = true;
+  if (G.players[oppPid].slots[oppSlot]) G.players[oppPid].slots[oppSlot].known[me] = true;
+}
+function cpuKingTradeDecide() {
+  if (!G || hot || G.phase !== "power" || G.powerStep !== "k-trade") return;
+  var me = cpuId();
+  var mine = G.powerMine;
+  var t = G.powerTarget;
+  if (!mine || !t) return skipKingTrade();
+  // Only use cards the computer actually peeked (known[cpu] from endPeekReveal)
+  if (!cpuKnows(mine.pid, mine.i) || !cpuKnows(t.pid, t.i)) return skipKingTrade();
+  var myCard = G.players[mine.pid].slots[mine.i];
+  var oppCard = G.players[t.pid].slots[t.i];
+  if (!myCard || !oppCard) return skipKingTrade();
+  var myV = val(myCard);
+  var oppV = val(oppCard);
+  // Trade the peeked pair if opponent card is better (lower) than peeked own
+  if (oppV < myV - 0.5) {
+    confirmKingTrade();
+    return;
+  }
+  skipKingTrade();
+}
+function cpuChainPlay() {
+  // Post-swap one-shot: at most one matching discard/dump, then end turn
+  if (!G || hot || G.phase !== "chain" || G.chainPid !== cpuId()) return;
+  if (!G.pick.length) return passChain();
+  var me = cpuId();
+  var rank = G.chainRank;
+  var oppKey = null, ownKey = null;
+  for (var pi = 0; pi < G.pick.length; pi++) {
+    var parts0 = G.pick[pi].split(":");
+    var p0 = Number(parts0[0]), i0 = Number(parts0[1]);
+    var c0 = G.players[p0].slots[i0];
+    if (!c0 || c0.r !== rank) continue;
+    if (p0 !== me) {
+      if (cpuKnows(p0, i0) && !oppKey) oppKey = G.pick[pi];
+    } else if (!ownKey) ownKey = G.pick[pi];
+  }
+  var key = oppKey || ownKey;
+  if (!key) return passChain();
+  var parts = key.split(":");
+  var pid = Number(parts[0]), i = Number(parts[1]);
+  var ch = G.players[pid].slots[i];
+  if (!ch) { passChain(); return; }
+  if (pid !== me) {
+    if (cpuLiveIndices(me).length > 0) {
+      cpuDoDump(pid, i, rank);
+      return;
+    }
+    return passChain();
+  }
+  G.players[pid].slots[i] = null;
+  G.pile.push(ch);
+  G.free = true;
+  say("Computer discarded matching " + label(ch) + " after swap. Turn ends.");
+  G.pick = []; G.chainPid = null; G.chainRank = null;
+  finish();
+}
+window.onerror = function(msg) { err(msg); };
+(function boot() {
+  var join = new URLSearchParams(location.search).get("join");
+  if (join) {
+    document.getElementById("joinCode").value = join.toUpperCase();
+    document.getElementById("choice").textContent = "Code " + join.toUpperCase() + " loaded — enter your name and click Join.";
+  }
+})();
+</script>
+</body>
+</html>

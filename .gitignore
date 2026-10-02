@@ -1,0 +1,4 @@
+node_modules/
+*.bak
+*.pre-earthy-backup
+.DS_Store
