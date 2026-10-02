@@ -169,6 +169,7 @@
     border-left: 4px solid var(--accent);
     border-radius: 6px;
   }
+  #log:empty { display: none; }
   #actTimer {
     display: none;
     margin: 8px 3px 0;
@@ -942,7 +943,7 @@ function renderOnline() {
     }
   }
   document.getElementById("deck").textContent = (!memorizing && online.free && online.pileTop) ? "Pick available (passed/discarded): " + label(online.pileTop) : "";
-  say(online.log || "");
+  say(online.phase === "reveal" ? (online.log || "") : "");
   var center = document.getElementById("center");
   center.innerHTML = "";
   if (!memorizing) {
@@ -1237,6 +1238,7 @@ function wrongOppDumpKeepBoth(actor, oppPid, slotI) {
 }
 function render() {
   if (mode === "online") return renderOnline();
+  if (G.phase !== "reveal") say("");
   var memorizing = G.phase === "memorize";
   var viewer = 0;
   if (memorizing) {
