@@ -493,6 +493,7 @@ export function publicState(room: Room, viewerId: number): any {
   if (!G) {
     return {
       code: room.code,
+      version: room.version,
       waiting: true,
       n: room.n,
       you,
@@ -530,6 +531,7 @@ export function publicState(room: Room, viewerId: number): any {
 
   return {
     code: room.code,
+    version: room.version,
     you,
     n: room.n,
     phase,

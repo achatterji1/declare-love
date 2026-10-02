@@ -387,6 +387,8 @@ function ensureWs(cb) {
 
 function handleState(state, code) {
   if (!state) return;
+  // Ignore out-of-order responses: a slow poll must not overwrite a newer state.
+  if (online && typeof state.version === "number" && typeof online.version === "number" && state.version < online.version) return;
   if (code) state.code = code;
   online = state;
   renderOnline();
