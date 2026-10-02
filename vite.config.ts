@@ -8,5 +8,5 @@ export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
-  plugins: [tanstackStart({ target: "cloudflare-module" }), viteReact()],
+  plugins: [tanstackStart(), viteReact()],
 });
