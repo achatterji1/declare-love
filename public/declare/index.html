@@ -477,8 +477,8 @@ function renderOnline() {
   if (!online) return;
   document.getElementById("inviteBox").style.display = "block";
   document.getElementById("inviteCode").textContent = online.code || "";
-  var link = location.origin + "/?join=" + (online.code || "");
-  document.getElementById("inviteLink").innerHTML = 'Send this link: <a href="' + link + '" style="color:#c6a15b">' + link + "</a>";
+  var link = location.origin + "/declare/index.html?join=" + (online.code || "");
+  document.getElementById("inviteLink").innerHTML = 'Send this link: <a href="' + link + '" style="color:#d96f58">' + link + "</a>";
   if (online.waiting) {
     document.getElementById("setup").style.display = "block";
     document.getElementById("table").style.display = "none";
