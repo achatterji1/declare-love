@@ -585,7 +585,7 @@ var memorizeTicker = null, memorizeEndsAt = null;
 var actTicker = null, actTickerEnds = null;
 var keepBothTimer = null;
 var peekTimer = null;
-var KEEP_BOTH_MS = 1200;
+var KEEP_BOTH_MS = 4000;
 var PEEK_MS = 1300;
 var ACT_MS = 30000;
 
@@ -779,7 +779,12 @@ function scheduleTick() {
   if (!endsAt) return;
   var delay = Math.max(0, endsAt - Date.now()) + 150;
   tickTimeout = setTimeout(function() {
-    api("tick", { code: roomCode }).catch(function() {});
+    api("tick", { code: roomCode }).then(function() {
+      if (!roomCode || mySeat === null) return null;
+      return api("state", { code: roomCode, seat: mySeat, token: seatToken });
+    }).then(function(res) {
+      if (res && res.state) handleState(res.state);
+    }).catch(function() {});
   }, delay);
 }
 
@@ -790,7 +795,7 @@ function subscribe() {
     api("state", { code: roomCode, seat: mySeat, token: seatToken })
       .then(function(res) { handleState(res.state); })
       .catch(function() {});
-  }, 3000);
+  }, 1000);
   if (window.supabase && cfg && cfg.url && cfg.key) {
     try {
       var sb = window.supabase.createClient(cfg.url, cfg.key);
@@ -1628,7 +1633,7 @@ function wrongDiscardKeepBoth(pid, slotI) {
   var priorHandKnown = !!card.known[pid];
   var extra = {r:drawn.r, s:drawn.s, known:[]};
   for (var k = 0; k < G.n; k++) extra.known.push(false);
-  // Briefly face-up for the acting player so they know where both landed
+  // Both cards stay face-up for every viewer during keepBoth, then flip down.
   card.known[pid] = true;
   extra.known[pid] = true;
   // Local AI saw the public center card — remember that slot (separate from owner flash)

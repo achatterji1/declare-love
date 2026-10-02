@@ -8,7 +8,7 @@ const portFlag = process.argv.indexOf("--port");
 const PORT = process.env.PORT || (portFlag >= 0 ? process.argv[portFlag + 1] : null) || 8765;
 const MEMORIZE_MS = 30000;
 const ACT_MS = 30000;
-const KEEP_BOTH_MS = 1200;
+const KEEP_BOTH_MS = 4000;
 const PEEK_MS = 1300;
 const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 const SUITS = ["H","D","C","S"];

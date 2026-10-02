@@ -5,7 +5,7 @@
 
 export const MEMORIZE_MS = 30000;
 export const ACT_MS = 30000;
-export const KEEP_BOTH_MS = 1200;
+export const KEEP_BOTH_MS = 4000;
 export const PEEK_MS = 1300;
 
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -524,6 +524,7 @@ function wrongDiscardKeepBoth(room: Room, pid: number, slotI: number): void {
   G.dumpGive = null;
   const priorHandKnown = !!card.known[pid];
   const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  // Actor remembers the attempt; every viewer sees both faces via keepBoth, then they flip down.
   card.known[pid] = true;
   extra.known[pid] = true;
   const placedI = placeDrawnInHand(G, pid, extra);
