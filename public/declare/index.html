@@ -464,9 +464,13 @@ function joinInvite() {
 }
 
 function sendAction(payload) {
-  if (mode !== "online" || !ws || ws.readyState !== 1) return;
-  payload.type = "action";
-  ws.send(JSON.stringify(payload));
+  if (mode !== "online" || !roomCode || mySeat === null) return;
+  payload.code = roomCode;
+  payload.seat = mySeat;
+  payload.token = seatToken;
+  api("action", payload).then(function(res) {
+    handleState(res.state);
+  }).catch(function(e) { err(e.message); });
 }
 
 function renderOnline() {
