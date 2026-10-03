@@ -86,11 +86,10 @@ export function applyBuyIn(wallet: Wallet, amount: number): { ok: boolean; walle
 export function credit(wallet: Wallet, amount: number, key: string): Wallet {
   if (amount <= 0) return wallet;
   if (wallet.appliedKeys.includes(key)) return wallet;
-  const appliedKeys = wallet.appliedKeys.concat(key);
   return {
     ...wallet,
     chips: wallet.chips + amount,
-    appliedKeys: appliedKeys.length > 30 ? appliedKeys.slice(appliedKeys.length - 30) : appliedKeys,
+    appliedKeys: wallet.appliedKeys.concat(key),
   };
 }
 
@@ -133,24 +132,33 @@ export function computePayouts(input: {
   pot: number;
   scores: number[];
   seats: { playerId?: string | null; computer?: boolean }[];
+  stakes?: { playerId: string; seat?: number; amount: number }[];
   key: string;
 }): Payout[] {
-  const { pot, scores, seats, key } = input;
+  const { pot, scores, seats, stakes, key } = input;
   if (pot <= 0 || !scores.length) return [];
   const low = Math.min(...scores);
   const winners = scores.map((score, index) => index).filter((index) => scores[index] === low);
   const humans = winners.filter((index) => seats[index] && !seats[index].computer && seats[index].playerId);
-  if (!humans.length) return [];
-  if (winners.length === 1) {
+  if (humans.length === 1) {
     return [{ playerId: seats[humans[0]]!.playerId!, amount: pot, key }];
   }
-  const share = Math.floor(pot / winners.length);
-  let remainder = pot - share * winners.length;
-  const payouts: Payout[] = [];
-  humans.forEach((seat, index) => {
-    const amount = share + (index === 0 ? remainder : 0);
-    if (index === 0) remainder = 0;
-    if (amount > 0) payouts.push({ playerId: seats[seat]!.playerId!, amount, key: key + ":" + seat });
-  });
-  return payouts;
+  if (humans.length > 1) {
+    const share = Math.floor(pot / humans.length);
+    let remainder = pot - share * humans.length;
+    const payouts: Payout[] = [];
+    humans.forEach((seat, index) => {
+      const amount = share + (index === 0 ? remainder : 0);
+      if (index === 0) remainder = 0;
+      if (amount > 0) payouts.push({ playerId: seats[seat]!.playerId!, amount, key: key + ":" + seat });
+    });
+    return payouts;
+  }
+  return (stakes || [])
+    .filter((stake) => stake.amount > 0 && stake.playerId)
+    .map((stake) => ({
+      playerId: stake.playerId,
+      amount: stake.amount,
+      key: key + ":return:" + stake.playerId + ":" + (stake.seat ?? ""),
+    }));
 }

@@ -7,6 +7,7 @@ import {
   makeDeal,
   moveClockMs,
   publicState,
+  leaveSeat,
   reveal,
   startGame,
 } from "../src/lib/declare-engine.ts";
@@ -163,9 +164,27 @@ function testBuyInAndWinnerTakesPot() {
   assert.deepEqual(split.map((row) => row.playerId).sort(), ["ann", "bo"]);
 }
 
-function testComputerWinDoesNotPayAWallet() {
+function testPayoutKeyStaysRejected() {
+  let wallet = createWallet("ann");
+  wallet = credit(wallet, 100, "pot-key");
+  assert.equal(wallet.chips, 10100);
+  for (let i = 0; i < 40; i++) wallet = credit(wallet, 1, "other-" + i);
+  assert.equal(wallet.chips, 10140);
+  assert.equal(wallet.appliedKeys.includes("pot-key"), true);
+  assert.equal(wallet.appliedKeys.length, 41);
+  const replay = credit(wallet, 100, "pot-key");
+  assert.equal(replay, wallet);
+  assert.equal(replay.chips, 10140);
+}
+
+function testComputerWinReturnsBuyIns() {
   const room = room4();
-  room.pot = 500;
+  room.pot = 1500;
+  room.stakes = [
+    { playerId: "bo", seat: 1, amount: 500 },
+    { playerId: "cy", seat: 2, amount: 500 },
+    { playerId: "dee", seat: 3, amount: 500 },
+  ];
   room.seats[0] = { name: "Computer", token: "", computer: true };
   room.G.players[0].name = "Computer";
   room.G.players[0].slots = [card("A", "S", 4)];
@@ -174,8 +193,116 @@ function testComputerWinDoesNotPayAWallet() {
   room.G.players[3].slots = [card("Q", "H", 4)];
   reveal(room);
   assert.equal(room.pot, 0);
-  assert.equal(room.payouts, null);
+  assert.ok(room.payouts);
+  assert.equal(room.payouts.reduce((sum, row) => sum + row.amount, 0), 1500);
+  assert.deepEqual(room.payouts.map((row) => row.playerId).sort(), ["bo", "cy", "dee"]);
+  assert.ok(room.payouts.every((row) => row.amount === 500));
+  assert.equal(room.payouts.some((row) => row.playerId == null), false);
   assert.match(room.G.log, /Computer wins\.$/);
+
+  let bo = createWallet("bo");
+  bo.chips = 9500;
+  for (const row of room.payouts) {
+    if (row.playerId === "bo") bo = credit(bo, row.amount, row.key);
+  }
+  assert.equal(bo.chips, 10000);
+  assert.equal(credit(bo, 500, room.payouts.find((row) => row.playerId === "bo").key).chips, 10000);
+}
+
+function testComputerTiePaysTheWholePotToHumans() {
+  const tied = room4();
+  tied.pot = 1000;
+  tied.stakes = [
+    { playerId: "ann", seat: 0, amount: 500 },
+    { playerId: "cy", seat: 2, amount: 500 },
+  ];
+  tied.seats[1] = { name: "Computer", token: "", computer: true };
+  tied.G.players[1].name = "Computer";
+  tied.G.players[0].name = "Ann";
+  tied.G.players[0].slots = [card("A", "S", 4)];
+  tied.G.players[1].slots = [card("A", "H", 4)];
+  tied.G.players[2].slots = [card("K", "C", 4)];
+  tied.G.players[3].slots = [card("Q", "H", 4)];
+  reveal(tied);
+  assert.equal(tied.pot, 0);
+  assert.equal(tied.payouts.length, 1);
+  assert.equal(tied.payouts[0].playerId, "ann");
+  assert.equal(tied.payouts[0].amount, 1000);
+  assert.match(tied.G.log, /Tie\.$/);
+
+  const split = computePayouts({
+    pot: 900,
+    scores: [5, 5, 5, 9],
+    seats: [{ playerId: "ann" }, { playerId: "bo", computer: true }, { playerId: "cy" }, { playerId: "dee" }],
+    key: "humans",
+  });
+  assert.equal(split.reduce((sum, row) => sum + row.amount, 0), 900);
+  assert.deepEqual(split.map((row) => row.playerId).sort(), ["ann", "cy"]);
+  assert.ok(split.every((row) => row.amount === 450));
+}
+
+function testMidHandQuitForfeitsOnlyThatSeat() {
+  const room = room4();
+  room.pot = 2000;
+  room.stakes = [
+    { playerId: "ann", seat: 0, amount: 500 },
+    { playerId: "bo", seat: 1, amount: 500 },
+    { playerId: "cy", seat: 2, amount: 500 },
+    { playerId: "dee", seat: 3, amount: 500 },
+  ];
+  leaveSeat(room, 1);
+  assert.equal(room.status, "playing");
+  assert.equal(room.pot, 2000);
+  assert.equal(room.payouts, null);
+  assert.equal(room.stakes.length, 4);
+  assert.equal(room.seats[1].computer, true);
+  assert.equal(room.seats[1].name, "Computer");
+  assert.equal(room.G.players[1].name, "Computer");
+  assert.equal(room.seats[0].playerId, "ann");
+  assert.equal(room.seats[2].playerId, "cy");
+  assert.equal(room.seats[3].playerId, "dee");
+
+  room.G.players[0].name = "Ann";
+  room.G.players[0].slots = [card("A", "S", 4)];
+  room.G.players[1].slots = [card("K", "C", 4)];
+  room.G.players[2].slots = [card("K", "S", 4)];
+  room.G.players[3].slots = [card("Q", "H", 4)];
+  reveal(room);
+  assert.equal(room.payouts.length, 1);
+  assert.equal(room.payouts[0].playerId, "ann");
+  assert.equal(room.payouts[0].amount, 2000);
+
+  const lobbyRoom = {
+    code: "LOB",
+    n: 4,
+    cardsN: 4,
+    status: "lobby",
+    version: 2,
+    G: null,
+    seats: [
+      { name: "Ann", token: "a", playerId: "ann" },
+      { name: "Bo", token: "b", playerId: "bo" },
+      null,
+      null,
+    ],
+    tier: "bronze",
+    pot: 1000,
+    buyIn: 500,
+    stakes: [
+      { playerId: "ann", seat: 0, amount: 500 },
+      { playerId: "bo", seat: 1, amount: 500 },
+    ],
+    payouts: null,
+  };
+  leaveSeat(lobbyRoom, 0);
+  assert.equal(lobbyRoom.status, "lobby");
+  assert.equal(lobbyRoom.pot, 500);
+  assert.equal(lobbyRoom.seats[0], null);
+  assert.equal(lobbyRoom.seats[1].playerId, "bo");
+  assert.equal(lobbyRoom.payouts.length, 1);
+  assert.equal(lobbyRoom.payouts[0].playerId, "ann");
+  assert.equal(lobbyRoom.payouts[0].amount, 500);
+  assert.equal(lobbyRoom.stakes.length, 1);
 }
 
 function testComputerSeatsAreLabeledComputer() {
@@ -332,7 +459,10 @@ function testOffTurnGiveTimeoutPicksACard() {
 testWalletStartsAtTenThousand();
 testClaimTimerStartsOnlyWhenClaimed();
 testBuyInAndWinnerTakesPot();
-testComputerWinDoesNotPayAWallet();
+testPayoutKeyStaysRejected();
+testComputerWinReturnsBuyIns();
+testComputerTiePaysTheWholePotToHumans();
+testMidHandQuitForfeitsOnlyThatSeat();
 testComputerSeatsAreLabeledComputer();
 testTierClocks();
 testMoveClockByTierKeepsCenterCard();

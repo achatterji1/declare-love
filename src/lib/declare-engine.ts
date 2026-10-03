@@ -143,13 +143,11 @@ function awardPot(room: Room, scores: number[]): number {
     return !!(seat && !seat.computer && seat.playerId);
   });
   const key = room.code + ":pot:" + room.version + ":" + scores.join(",");
-  if (!humans.length) {
-    room.payouts = null;
-  } else if (winners.length === 1) {
+  if (humans.length === 1) {
     room.payouts = [{ playerId: room.seats[humans[0]]!.playerId!, amount: pot, key }];
-  } else {
-    const share = Math.floor(pot / winners.length);
-    let remainder = pot - share * winners.length;
+  } else if (humans.length > 1) {
+    const share = Math.floor(pot / humans.length);
+    let remainder = pot - share * humans.length;
     room.payouts = humans
       .map((seat, index) => {
         const amount = share + (index === 0 ? remainder : 0);
@@ -157,10 +155,50 @@ function awardPot(room: Room, scores: number[]): number {
         return amount > 0 ? { playerId: room.seats[seat]!.playerId!, amount, key: key + ":" + seat } : null;
       })
       .filter((row): row is NonNullable<typeof row> => !!row);
+  } else {
+    const stakes = room.stakes || [];
+    const refunds = stakes
+      .filter((stake) => stake.amount > 0 && stake.playerId)
+      .map((stake) => ({
+        playerId: stake.playerId,
+        amount: stake.amount,
+        key: room.code + ":return:" + room.version + ":" + stake.playerId + ":" + stake.seat,
+      }));
+    room.payouts = refunds.length ? refunds : null;
   }
   room.pot = 0;
   room.stakes = [];
   return pot;
+}
+
+// Lobby leave refunds that one buy-in. A chip seat that leaves after the hand
+// starts forfeits only that buy-in: the seat becomes the computer, everyone
+// else stays, and the pot is still awarded at the end.
+export function leaveSeat(room: Room, seat: number): void {
+  const sitting = room.seats[seat];
+  if (!sitting || sitting.computer) return;
+  if (room.status === "lobby") {
+    const stake = (room.stakes || []).find((row) => row.seat === seat && row.playerId === sitting.playerId);
+    room.seats[seat] = null;
+    if (stake) {
+      room.stakes = (room.stakes || []).filter((row) => row !== stake);
+      room.pot = Math.max(0, (room.pot || 0) - stake.amount);
+      room.payouts = [
+        {
+          playerId: stake.playerId,
+          amount: stake.amount,
+          key: room.code + ":leave:" + seat + ":" + room.version + ":" + stake.amount,
+        },
+      ];
+    }
+    return;
+  }
+  if (room.tier) {
+    room.seats[seat] = { name: "Computer", token: "", computer: true };
+    if (room.G && room.G.players[seat]) room.G.players[seat].name = "Computer";
+    return;
+  }
+  room.status = "abandoned";
 }
 
 function cardId(): string {
@@ -1345,6 +1383,10 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
   const act = msg.action;
 
   if (act === "quit") {
+    if (room.tier) {
+      leaveSeat(room, pid);
+      return;
+    }
     room.status = "abandoned";
     return;
   }
