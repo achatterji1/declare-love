@@ -679,6 +679,11 @@ function testClaimTableMissingIsRecognized() {
 
 function testLobbyCopyStaysQuiet() {
   const html = readFileSync(new URL("../public/declare/index.html", import.meta.url), "utf8");
+  assert.equal(html.includes('src="tiers/bronze.jpg"'), true);
+  assert.equal(html.includes('src="tiers/silver.jpg"'), true);
+  assert.equal(html.includes('src="tiers/gold.jpg"'), true);
+  assert.equal(html.includes('src="tiers/vip.jpg"'), true);
+  assert.equal(/src="https?:/.test(html.slice(html.indexOf('class="tier-row"'), html.indexOf('id="chipStatus"'))), false);
   assert.equal(html.includes("A round takes only a few minutes"), false);
   assert.equal(html.includes("Chips stay in your wallet"), false);
   assert.equal(html.includes("30s"), false);
