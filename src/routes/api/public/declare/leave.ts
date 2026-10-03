@@ -21,9 +21,8 @@ export const Route = createFileRoute("/api/public/declare/leave")({
             if (r.status === "lobby") {
               r.seats[seat] = null;
             } else {
-              // Mid-game departure: mark the seat abandoned so the UI can show it.
-              const s = r.seats[seat];
-              if (s) r.seats[seat] = { name: s.name + " (left)", token: s.token };
+              // Quit (and a mid-game disconnect) sends every client back to setup.
+              r.status = "abandoned";
             }
           });
         } catch {

@@ -133,7 +133,60 @@
     font: 700 18px/1 Georgia, serif;
     box-shadow: 0 4px 8px rgba(71,52,35,.18), inset 0 0 0 2px rgba(255,255,255,.5);
   }
-  .card:hover:not(:disabled) { transform: translateY(-2px); }
+  .card:hover:not(:disabled):not(.drag-src) { transform: translateY(-2px); }
+  .card { touch-action: none; user-select: none; -webkit-user-select: none; }
+  .card.can-drag { cursor: grab; }
+  .card.can-drag:active { cursor: grabbing; }
+  .card.drag-src { opacity: .38; }
+  .card.flash {
+    box-shadow: inset 0 0 0 3px var(--accent), 0 0 0 4px rgba(217,111,88,.28), 0 8px 14px rgba(71,52,35,.22);
+    transform: translateY(-3px);
+    z-index: 2;
+  }
+  .drop-ok {
+    outline: 3px dashed var(--olive-dark);
+    outline-offset: 3px;
+  }
+  .card.drop-ok {
+    box-shadow: inset 0 0 0 3px var(--olive), 0 0 0 5px rgba(135,149,95,.22), 0 4px 8px rgba(71,52,35,.18);
+  }
+  .drop-hot { outline-style: solid; outline-color: #3e4736; }
+  .card.drop-hot { transform: translateY(-4px); background: #fffaf1; }
+  .pile.drop-ok {
+    outline: 3px dashed var(--olive-dark);
+    outline-offset: 8px;
+    border-radius: 14px;
+    background: rgba(135,149,95,.12);
+  }
+  .pile.drop-hot { outline-style: solid; background: rgba(135,149,95,.2); }
+  .drag-ghost {
+    position: fixed;
+    z-index: 40;
+    margin: 0;
+    pointer-events: none;
+    opacity: .94;
+    transform: rotate(-4deg) scale(1.05);
+    box-shadow: 0 14px 26px rgba(71,52,35,.32);
+  }
+  .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  #dragHint { margin: 4px 0 8px; color: var(--muted); font-style: italic; min-height: 1.3em; }
+  .table-foot {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 28px;
+    margin-top: 36px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
+  #redeal { margin-right: auto; }
+  .quit-btn {
+    background: transparent;
+    color: var(--muted);
+    border-color: #cbbba6;
+    box-shadow: none;
+  }
+  .quit-btn:hover:not(:disabled) { background: rgba(255,250,241,.7); color: var(--ink); }
   .back {
     color: #eee8d8;
     border-color: #59634d;
@@ -146,7 +199,7 @@
   .red { color: var(--red); }
   .known { box-shadow: inset 0 0 0 3px #b29461, 0 4px 8px rgba(71,52,35,.18); }
   .pick { box-shadow: inset 0 0 0 3px var(--olive), 0 0 0 2px rgba(104,116,90,.2), 0 4px 8px rgba(71,52,35,.18); }
-  .pile { height: 124px; position: relative; margin: 8px auto 2px; width: 110px; }
+  .pile { height: 124px; position: relative; margin: 8px auto 2px; width: 110px; touch-action: none; }
   .pile .card { position: absolute; }
   #center { min-height: 6px; display: flex; justify-content: center; }
   #who {
@@ -361,27 +414,27 @@
       <span class="hint" id="memorizeHint">Memorize your bottom two cards.</span>
       <button type="button" id="readyBtn" onclick="doReady()">Ready</button>
     </div>
-    <button type="button" id="draw" onclick="doDraw()">Draw</button>
-    <button type="button" id="claim" onclick="doClaim()">Pick</button>
-    <button type="button" id="leave" onclick="doPass()">Pass</button>
-    <button type="button" id="swap" onclick="doArm('swap')">Swap in</button>
-    <button type="button" id="discard" onclick="doArm('discard')">Discard onto center</button>
-    <button type="button" id="power" onclick="doPower()">Use power</button>
-    <button type="button" id="confirmTrade" onclick="doConfirmTrade()" style="display:none">Trade</button>
-    <button type="button" id="skipTrade" onclick="doSkipTrade()" style="display:none">Skip trade</button>
-    <button type="button" id="passChain" onclick="doPassChain()" style="display:none" aria-hidden="true" disabled>Done discarding</button>
+    <div class="action-row">
+      <button type="button" id="draw" onclick="doDraw()">Draw</button>
+      <button type="button" id="leave" onclick="doPass()">Pass</button>
+      <button type="button" id="power" onclick="doPower()">Use power</button>
+      <button type="button" id="call" onclick="doDeclare()">Declare</button>
+      <span id="who"></span>
+    </div>
+    <p id="dragHint"></p>
     <p id="actTimer"></p>
     <div id="confirmBar">
       <span id="confirmText">Confirm this choice?</span>
       <button type="button" id="confirmYes" onclick="doConfirmChoice()" disabled>Yes</button>
       <button type="button" id="confirmNo" onclick="doCancelChoice()" disabled>No</button>
     </div>
-    <button type="button" id="call" onclick="doDeclare()">Declare</button>
-    <button type="button" onclick="doRedeal()">New deal</button>
-    <span id="who"></span>
     <div id="center"></div>
     <div id="seats" class="players"></div>
     <p id="log" hidden></p>
+    <div class="table-foot">
+      <button type="button" id="redeal" onclick="doRedeal()" style="display:none">New deal</button>
+      <button type="button" id="quit" class="quit-btn" onclick="doQuit()">Quit</button>
+    </div>
   </section>
   <div id="manual" class="manual" hidden>
     <div class="manual-backdrop" onclick="closeManual()"></div>
@@ -658,8 +711,9 @@ function setMemorizeBar(on, hint, readyDisabled) {
   document.getElementById("readyBtn").disabled = !!readyDisabled;
 }
 function disablePlayButtons(disabled) {
-  ["draw","claim","leave","swap","discard","power","call"].forEach(function(id) {
-    document.getElementById(id).disabled = !!disabled;
+  ["draw","leave","power","call"].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.disabled = !!disabled;
   });
 }
 function stopActTicker() {
@@ -764,6 +818,11 @@ function ensureWs(cb) {
 
 function handleState(state, code) {
   if (!state) return;
+  if (mode !== "online" || !roomCode) return;
+  if (state.dismissed || state.status === "abandoned") {
+    returnToSetup();
+    return;
+  }
   // Ignore out-of-order responses: a slow poll must not overwrite a newer state.
   if (online && typeof state.version === "number" && typeof online.version === "number" && state.version < online.version) return;
   if (code) state.code = code;
@@ -857,8 +916,548 @@ function sendAction(payload) {
   }).catch(function(e) { err(e.message); });
 }
 
+function playCtx() {
+  if (mode === "online") {
+    if (!online || online.waiting || online.dismissed) return null;
+    return {
+      you: online.you,
+      turn: online.turn,
+      phase: online.phase,
+      free: !!online.free,
+      declarer: online.declarer,
+      intent: online.intent,
+      pick: online.pick || [],
+      pileTop: online.pileTop,
+      power: online.power,
+      powerStep: online.powerStep,
+      chainRank: online.chainRank,
+      players: online.players || [],
+      dumpGive: online.dumpGive || null,
+      powerMine: online.powerMine || null,
+      powerTarget: online.powerTarget || null,
+      keepBoth: online.keepBoth || null,
+      pending: online.pending || null,
+      myTurn: online.turn === online.you && online.phase !== "reveal" && online.phase !== "keepBoth" && online.phase !== "peekReveal" && online.phase !== "memorize",
+      n: (online.players || []).length
+    };
+  }
+  if (!G) return null;
+  return {
+    you: 0,
+    turn: G.turn,
+    phase: G.phase,
+    free: !!G.free,
+    declarer: G.declarer,
+    intent: G.intent,
+    pick: G.pick || [],
+    pileTop: pileTop(),
+    power: G.power,
+    powerStep: G.powerStep,
+    chainRank: G.chainRank,
+    players: G.players,
+    dumpGive: G.dumpGive || null,
+    powerMine: G.powerMine || null,
+    powerTarget: G.powerTarget || null,
+    keepBoth: G.phase === "keepBoth" && G.keepBoth ? { pid: G.keepBoth.pid, handI: G.keepBoth.handI, placedI: G.keepBoth.placedI } : null,
+    pending: G.pending || null,
+    myTurn: G.turn === 0 && G.phase !== "reveal" && G.phase !== "memorize" && G.phase !== "keepBoth" && G.phase !== "peekReveal",
+    n: G.n
+  };
+}
+function playerById(c, p) {
+  if (!c || !c.players) return null;
+  if (c.players[p] && c.players[p].id === p) return c.players[p];
+  for (var k = 0; k < c.players.length; k++) if (c.players[k].id === p) return c.players[k];
+  return null;
+}
+function occupied(c, p, i) {
+  var pl = playerById(c, p);
+  return !!(pl && pl.slots && pl.slots[i]);
+}
+function lockedSeat(c, p) { return !!(c && c.declarer !== null && p === c.declarer); }
+function ownTargets(c) {
+  var out = [], pl = playerById(c, c.you);
+  if (!pl) return out;
+  for (var i = 0; i < pl.slots.length; i++) if (pl.slots[i]) out.push({ zone: "hand", p: c.you, i: i });
+  return out;
+}
+function oppTargets(c) {
+  var out = [];
+  for (var k = 0; k < c.players.length; k++) {
+    var id = c.players[k].id;
+    if (id === c.you || lockedSeat(c, id)) continue;
+    var slots = c.players[k].slots || [];
+    for (var i = 0; i < slots.length; i++) if (slots[i]) out.push({ zone: "hand", p: id, i: i });
+  }
+  return out;
+}
+function dumpWindow(c) {
+  if (!c || !c.myTurn || !c.pileTop) return false;
+  if (c.phase === "act" || c.phase === "chain") return true;
+  if (c.phase === "draw" && c.free) return true;
+  if (c.phase === "pick" && c.intent === "discard") return true;
+  return false;
+}
+function legalMovesFrom(source) {
+  var c = playCtx();
+  if (!c || !c.myTurn || !source || c.pending) return [];
+  if (c.phase === "memorize" || c.phase === "reveal" || c.phase === "keepBoth" || c.phase === "peekReveal") return [];
+  var moves = [];
+  if (source.zone === "center") {
+    if (!c.pileTop) return moves;
+    var own = ownTargets(c);
+    if (c.phase === "act" && own.length) moves.push({ gesture: "swap", targets: own });
+    if (c.phase === "draw" && c.free && own.length) moves.push({ gesture: "claim", targets: own });
+    if (dumpWindow(c)) {
+      var opps = oppTargets(c);
+      if (opps.length) moves.push({ gesture: "dump", targets: opps });
+    }
+  }
+  if (source.zone === "hand" && occupied(c, source.p, source.i)) {
+    var key = source.p + ":" + source.i;
+    var mine = source.p === c.you;
+    if (mine && (c.phase === "act" || (c.phase === "draw" && c.free && c.pileTop) || (c.phase === "pick" && c.intent === "discard" && c.pick.indexOf(key) >= 0))) {
+      moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
+    }
+    if (mine && c.phase === "chain" && c.pick.indexOf(key) >= 0) {
+      moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
+    }
+    if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0) {
+      moves.push({ gesture: "give", targets: [{ zone: "hand", p: c.dumpGive.oppPid, i: c.dumpGive.emptiedI }] });
+    }
+    if (mine && c.phase === "power" && c.power === "Q" && (c.powerStep === "q-mine" || (c.powerStep === "q-theirs" && c.powerTarget && c.powerTarget.pid === source.p && c.powerTarget.i === source.i))) {
+      var qt = oppTargets(c);
+      if (qt.length) moves.push({ gesture: "qtrade", targets: qt });
+    }
+    if (c.phase === "power" && c.powerStep === "k-trade" && c.powerMine && c.powerTarget) {
+      if (source.p === c.powerMine.pid && source.i === c.powerMine.i) {
+        moves.push({ gesture: "ktrade", targets: [{ zone: "hand", p: c.powerTarget.pid, i: c.powerTarget.i }] });
+      } else if (source.p === c.powerTarget.pid && source.i === c.powerTarget.i) {
+        moves.push({ gesture: "ktrade", targets: [{ zone: "hand", p: c.powerMine.pid, i: c.powerMine.i }] });
+      }
+    }
+  }
+  return moves;
+}
+function dragHintFor(c) {
+  if (!c || c.phase === "memorize") return "";
+  if (c.phase === "reveal") return "Round over.";
+  if (c.phase === "keepBoth" || c.phase === "peekReveal") return "";
+  if (!c.myTurn) return "Waiting for the other player.";
+  if (c.phase === "dumpGive") return "Drag one of your cards onto the empty slot.";
+  if (c.phase === "chain") return "Drag one matching card onto the center, or Pass.";
+  if (c.phase === "power") {
+    if (c.powerStep === "q-mine" || c.powerStep === "q-theirs") return "Drag one of your cards onto an opponent card to trade.";
+    if (c.powerStep === "k-trade") return "Drag your peeked card onto theirs to trade, or Pass.";
+    return "Tap a highlighted card.";
+  }
+  if (c.phase === "act") return "Drag the center card onto one of yours to swap, or onto an opponent card to dump. Drag a hand card onto the center to discard.";
+  if (c.phase === "draw" && c.free && c.pileTop) return "Drag the center card onto one of yours to pick it, or onto an opponent card to dump. Drag a hand card onto the center to discard.";
+  if (c.phase === "draw") return "Draw, or Declare when you are ready.";
+  return "";
+}
+function canPassNow(c) {
+  if (!c || !c.myTurn || c.pending) return false;
+  if (c.phase === "act" || c.phase === "chain") return true;
+  if (c.phase === "power" && c.powerStep === "k-trade") return true;
+  return false;
+}
+function canUsePower(c) {
+  if (!c || !c.myTurn || c.pending || c.phase !== "act" || !c.pileTop || !isPowerRank(c.pileTop.r)) return false;
+  if (c.pileTop.r === "10") return true;
+  return oppTargets(c).length > 0;
+}
+function syncChrome(c, memorizing) {
+  var redeal = document.getElementById("redeal");
+  var hintEl = document.getElementById("dragHint");
+  if (memorizing || !c) {
+    disablePlayButtons(true);
+    if (redeal) redeal.style.display = "none";
+    if (hintEl) hintEl.textContent = "";
+    return;
+  }
+  var pending = !!c.pending;
+  document.getElementById("draw").disabled = pending || !(c.myTurn && c.phase === "draw");
+  document.getElementById("call").disabled = pending || !(c.myTurn && c.phase === "draw" && c.declarer === null);
+  document.getElementById("leave").disabled = pending || !canPassNow(c);
+  document.getElementById("power").disabled = pending || !canUsePower(c);
+  document.getElementById("power").style.display = "";
+  if (redeal) redeal.style.display = c.phase === "reveal" ? "" : "none";
+  if (hintEl) hintEl.textContent = dragHintFor(c);
+}
+function slotWantsPick(c, pid, i) {
+  if (!c || !c.pick || c.pick.indexOf(pid + ":" + i) < 0) return false;
+  if (c.phase === "chain" || c.phase === "dumpGive" || c.phase === "pick") return true;
+  if (c.phase === "power" && c.powerStep !== "q-mine" && c.powerStep !== "q-theirs" && c.powerStep !== "k-trade") return true;
+  return false;
+}
+function keepBothFlash(c, pid, i) {
+  return !!(c && c.keepBoth && c.phase === "keepBoth" && c.keepBoth.pid === pid && (c.keepBoth.handI === i || c.keepBoth.placedI === i));
+}
+function mountPile(pile, topCard, underCard) {
+  pile.setAttribute("data-zone", "center");
+  if (underCard) {
+    var under = cardEl(underCard, true, false);
+    under.style.left = "0";
+    under.style.top = "12px";
+    under.setAttribute("draggable", "false");
+    pile.appendChild(under);
+  }
+  var face = cardEl(topCard, !!topCard, false);
+  face.style.left = "18px";
+  face.style.top = "0";
+  face.setAttribute("draggable", "false");
+  if (topCard) {
+    face.setAttribute("data-zone", "center");
+    bindCard(face);
+    markIfDraggable(face, { zone: "center" });
+  }
+  pile.appendChild(face);
+}
+function wireHandCard(el, p, i, memorizing) {
+  el.setAttribute("data-p", p);
+  el.setAttribute("data-i", i);
+  el.setAttribute("data-zone", "hand");
+  el.setAttribute("draggable", "false");
+  if (memorizing) { el.onclick = null; return; }
+  bindCard(el);
+  markIfDraggable(el, { zone: "hand", p: p, i: i });
+  el.onclick = function(ev) {
+    if (suppressClick) return;
+    if (mode === "online") {
+      if (!online || online.pending) return;
+      sendAction({ action: "card", i: i, p: p });
+      return;
+    }
+    onCard(ev);
+  };
+}
+var drag = null;
+var suppressClick = false;
+var renderQueued = false;
+function bindCard(el) {
+  el.addEventListener("pointerdown", onDragDown);
+}
+function markIfDraggable(el, spec) {
+  if (legalMovesFrom(spec).length) el.classList.add("can-drag");
+}
+function specFromEl(el) {
+  if (!el || !el.getAttribute) return null;
+  var zone = el.getAttribute("data-zone");
+  if (zone === "center") return { zone: "center" };
+  if (zone === "hand") return { zone: "hand", p: Number(el.getAttribute("data-p")), i: Number(el.getAttribute("data-i")) };
+  return null;
+}
+function onDragDown(ev) {
+  if (drag) return;
+  if (ev.pointerType === "mouse" && ev.button !== 0) return;
+  var spec = specFromEl(ev.currentTarget);
+  var moves = legalMovesFrom(spec);
+  if (!moves.length) return;
+  drag = {
+    el: ev.currentTarget,
+    spec: spec,
+    moves: moves,
+    x: ev.clientX,
+    y: ev.clientY,
+    pointerId: ev.pointerId,
+    pointerType: ev.pointerType || "mouse",
+    started: false,
+    origin: ev.currentTarget.getBoundingClientRect(),
+    ghost: null,
+    hotEl: null
+  };
+  try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (e) {}
+}
+function onDragMove(ev) {
+  if (!drag || ev.pointerId !== drag.pointerId) return;
+  if (drag.started && drag.el && !drag.el.isConnected) { cancelDrag(); return; }
+  var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+  if (!drag.started) {
+    if (dx * dx + dy * dy < 64) return;
+    beginDragVisual();
+  }
+  ev.preventDefault();
+  var lift = drag.pointerType === "touch" ? 36 : 0;
+  drag.ghost.style.left = (ev.clientX - drag.origin.width / 2) + "px";
+  drag.ghost.style.top = (ev.clientY - drag.origin.height / 2 - lift) + "px";
+  var hit = dropElAt(ev.clientX, ev.clientY - lift);
+  if (drag.hotEl !== hit) {
+    if (drag.hotEl) drag.hotEl.classList.remove("drop-hot");
+    drag.hotEl = hit;
+    if (hit) hit.classList.add("drop-hot");
+  }
+}
+function beginDragVisual() {
+  drag.started = true;
+  suppressClick = true;
+  drag.el.classList.add("drag-src");
+  var g = document.createElement("div");
+  g.className = drag.el.className + " drag-ghost";
+  g.classList.remove("drag-src");
+  g.classList.remove("can-drag");
+  g.textContent = drag.el.textContent;
+  g.style.width = drag.origin.width + "px";
+  g.style.height = drag.origin.height + "px";
+  g.style.left = drag.origin.left + "px";
+  g.style.top = drag.origin.top + "px";
+  document.body.appendChild(g);
+  drag.ghost = g;
+  drag.moves.forEach(function(m) {
+    m.targets.forEach(function(t) {
+      var el = elForTarget(t);
+      if (!el) return;
+      el.classList.add("drop-ok");
+      el.setAttribute("data-drop", "1");
+    });
+  });
+  document.body.classList.add("dragging");
+}
+function elForTarget(t) {
+  if (t.zone === "center") return document.querySelector("#center .pile");
+  var nodes = document.querySelectorAll(".card[data-zone='hand']");
+  for (var i = 0; i < nodes.length; i++) {
+    if (Number(nodes[i].getAttribute("data-p")) === t.p && Number(nodes[i].getAttribute("data-i")) === t.i) return nodes[i];
+  }
+  return null;
+}
+function dropElAt(x, y) {
+  var stack = document.elementsFromPoint(x, y);
+  for (var i = 0; i < stack.length; i++) {
+    var el = stack[i];
+    if (!el || !el.closest) continue;
+    if (drag && drag.ghost && (el === drag.ghost || drag.ghost.contains(el))) continue;
+    var hit = el.getAttribute && el.getAttribute("data-drop") === "1" ? el : (el.closest ? el.closest("[data-drop='1']") : null);
+    if (hit) return hit;
+  }
+  return null;
+}
+function clearDropMarks() {
+  var marked = document.querySelectorAll("[data-drop]");
+  for (var i = 0; i < marked.length; i++) {
+    marked[i].classList.remove("drop-ok");
+    marked[i].classList.remove("drop-hot");
+    marked[i].removeAttribute("data-drop");
+  }
+}
+function snapGhost(session) {
+  var g = session && session.ghost;
+  if (!g) return;
+  var o = session.origin;
+  g.style.transition = "left .18s ease, top .18s ease, opacity .18s ease, transform .18s ease";
+  g.style.left = o.left + "px";
+  g.style.top = o.top + "px";
+  g.style.transform = "none";
+  g.style.opacity = "0.4";
+  setTimeout(function() { if (g.parentNode) g.parentNode.removeChild(g); }, 190);
+}
+function cancelDrag() {
+  if (!drag) return;
+  var session = drag;
+  drag = null;
+  clearDropMarks();
+  document.body.classList.remove("dragging");
+  if (session.el) session.el.classList.remove("drag-src");
+  if (session.ghost && session.ghost.parentNode) session.ghost.parentNode.removeChild(session.ghost);
+  flushQueuedRender();
+}
+function flushQueuedRender() {
+  if (!renderQueued) return;
+  renderQueued = false;
+  if (mode === "online") renderOnline();
+  else if (G) render();
+}
+function onDragUp(ev) {
+  if (!drag || ev.pointerId !== drag.pointerId) return;
+  var session = drag;
+  drag = null;
+  if (!session.started) return;
+  ev.preventDefault();
+  var hit = session.hotEl && session.hotEl.getAttribute("data-drop") === "1" ? session.hotEl : dropElAt(ev.clientX, ev.clientY - (session.pointerType === "touch" ? 36 : 0));
+  clearDropMarks();
+  document.body.classList.remove("dragging");
+  if (session.el) session.el.classList.remove("drag-src");
+  var target = hit ? targetFromEl(hit) : null;
+  var move = target ? matchMove(session.moves, target) : null;
+  try { session.el.releasePointerCapture(ev.pointerId); } catch (e) {}
+  if (!move) {
+    snapGhost(session);
+    setTimeout(function() { suppressClick = false; flushQueuedRender(); }, 50);
+    return;
+  }
+  setTimeout(function() {
+    var ok = performDrag(move, session.spec, target);
+    if (!ok) snapGhost(session);
+    else if (session.ghost && session.ghost.parentNode) session.ghost.parentNode.removeChild(session.ghost);
+    suppressClick = false;
+    flushQueuedRender();
+  }, 0);
+}
+function onDragCancel(ev) {
+  if (!drag || ev.pointerId !== drag.pointerId) return;
+  var session = drag;
+  drag = null;
+  clearDropMarks();
+  document.body.classList.remove("dragging");
+  if (session.el) session.el.classList.remove("drag-src");
+  if (session.started) snapGhost(session);
+  else if (session.ghost && session.ghost.parentNode) session.ghost.parentNode.removeChild(session.ghost);
+  flushQueuedRender();
+}
+function targetFromEl(el) {
+  if (!el) return null;
+  if (el.classList.contains("pile") || el.getAttribute("data-zone") === "center") return { zone: "center" };
+  return { zone: "hand", p: Number(el.getAttribute("data-p")), i: Number(el.getAttribute("data-i")) };
+}
+function matchMove(moves, target) {
+  for (var i = 0; i < moves.length; i++) {
+    var targets = moves[i].targets;
+    for (var j = 0; j < targets.length; j++) {
+      var t = targets[j];
+      if (t.zone !== target.zone) continue;
+      if (t.zone === "center") return moves[i];
+      if (t.p === target.p && t.i === target.i) return moves[i];
+    }
+  }
+  return null;
+}
+function performDrag(move, source, target) {
+  var c = playCtx();
+  if (!c) return false;
+  var payload = { gesture: move.gesture };
+  if (move.gesture === "swap" || move.gesture === "claim") {
+    payload.p = target.p;
+    payload.i = target.i;
+  } else if (move.gesture === "discard" || move.gesture === "give") {
+    payload.p = source.p;
+    payload.i = source.i;
+  } else if (move.gesture === "dump") {
+    payload.p = target.p;
+    payload.i = target.i;
+  } else if (move.gesture === "qtrade") {
+    if (source.zone === "hand" && source.p === c.you) {
+      payload.p = source.p; payload.i = source.i; payload.tp = target.p; payload.ti = target.i;
+    } else {
+      payload.p = target.p; payload.i = target.i; payload.tp = source.p; payload.ti = source.i;
+    }
+  } else if (move.gesture === "ktrade") {
+    payload.p = source.p; payload.i = source.i; payload.tp = target.p; payload.ti = target.i;
+  }
+  if (mode === "online") {
+    sendAction({ action: "drag", gesture: payload.gesture, p: payload.p, i: payload.i, tp: payload.tp, ti: payload.ti });
+    return true;
+  }
+  return applyLocalDrag(payload);
+}
+function applyLocalDrag(msg) {
+  var gesture = msg.gesture;
+  if (gesture === "swap" || gesture === "claim") return localSwapOrClaim(gesture, msg.i);
+  if (gesture === "discard") return localDiscard(msg.i);
+  if (gesture === "dump") return localDump(msg.p, msg.i);
+  if (gesture === "give") return localGive(msg.i);
+  if (gesture === "qtrade") return localQueen(msg.i, msg.tp, msg.ti);
+  if (gesture === "ktrade") return localKing(msg.p, msg.i, msg.tp, msg.ti);
+  return false;
+}
+function localSwapOrClaim(gesture, i) {
+  if (!G || G.turn !== 0) return false;
+  var pid = G.turn;
+  if (gesture === "swap" && G.phase !== "act") return false;
+  if (gesture === "claim" && !(G.phase === "draw" && G.free && pileTop())) return false;
+  if (i == null || !G.players[pid].slots[i] || !pileTop()) return false;
+  var taken = swapIntoHand(pid, i);
+  if (mode === "local") taken.known[1] = true;
+  var dumped = pileTop();
+  say((gesture === "claim" ? "Picked " : "Swapped in ") + label(taken) + " — " + label(dumped) + " on center.");
+  beginChain(pid, dumped.r, true);
+  return true;
+}
+function localDiscard(i) {
+  if (!G || G.turn !== 0) return false;
+  var pid = G.turn;
+  var card = G.players[pid].slots[i];
+  var drawn = pileTop();
+  if (!card || !drawn) return false;
+  if (G.phase === "chain") {
+    if (G.pick.indexOf(pid + ":" + i) < 0) return false;
+    if (card.r !== G.chainRank) return false;
+    var afterPeek = G.chainSkipFree === false;
+    G.players[pid].slots[i] = null;
+    G.pile.push(card);
+    G.free = true;
+    G.chainSkipFree = null;
+    say("Discarded matching " + label(card) + (afterPeek ? " after the peek." : " after swap.") + " Turn ends; next can Pick it.");
+    G.pick = []; G.chainPid = null; G.chainRank = null;
+    finish();
+    return true;
+  }
+  var allowed = G.phase === "act" || (G.phase === "draw" && G.free) || (G.phase === "pick" && G.intent === "discard");
+  if (!allowed) return false;
+  if (card.r === drawn.r) {
+    G.players[pid].slots[i] = null;
+    G.pile.push(card);
+    G.free = true;
+    say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
+    beginChain(pid, card.r);
+    return true;
+  }
+  wrongDiscardKeepBoth(pid, i);
+  return true;
+}
+function localDump(oppPid, i) {
+  if (!G || G.turn !== 0) return false;
+  if (oppPid === G.turn || handLocked(oppPid)) return false;
+  if (!pileTop()) return false;
+  var allowed = G.phase === "act" || (G.phase === "draw" && G.free) || G.phase === "chain" || (G.phase === "pick" && G.intent === "discard");
+  if (!allowed) return false;
+  if ((G.phase === "act" || (G.phase === "draw" && G.free)) && G.pick.indexOf(oppPid + ":" + i) < 0) addDumpPicks(G.turn);
+  return !!tryDumpOpponent(oppPid, i);
+}
+function localGive(i) {
+  if (!G || G.phase !== "dumpGive" || !G.dumpGive) return false;
+  if (G.turn !== 0) return false;
+  if (G.pick.indexOf(G.turn + ":" + i) < 0) return false;
+  if (!G.players[G.turn].slots[i]) return false;
+  completeDumpGive(i);
+  return true;
+}
+function localQueen(myI, oppPid, oppI) {
+  if (!G || G.turn !== 0 || G.phase !== "power" || G.power !== "Q") return false;
+  if (G.powerStep !== "q-mine" && G.powerStep !== "q-theirs") return false;
+  if (oppPid == null || oppI == null || oppPid === G.turn || handLocked(oppPid)) return false;
+  var mine = G.players[G.turn].slots[myI];
+  var theirs = G.players[oppPid].slots[oppI];
+  if (!mine || !theirs) return false;
+  var cpuKnewMine = mode === "local" && !!mine.known[cpuId()];
+  var cpuKnewTheirs = mode === "local" && !!theirs.known[cpuId()];
+  G.players[G.turn].slots[myI] = theirs;
+  G.players[oppPid].slots[oppI] = mine;
+  G.players[G.turn].slots[myI].known = Array(G.n).fill(false);
+  G.players[oppPid].slots[oppI].known = Array(G.n).fill(false);
+  if (cpuKnewTheirs) G.players[G.turn].slots[myI].known[cpuId()] = true;
+  if (cpuKnewMine) G.players[oppPid].slots[oppI].known[cpuId()] = true;
+  say("Blind-traded with " + G.players[oppPid].name + ".");
+  G.free = false; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+  finish();
+  return true;
+}
+function localKing(p, i, tp, ti) {
+  if (!G || G.phase !== "power" || G.powerStep !== "k-trade") return false;
+  var mine = G.powerMine, opp = G.powerTarget;
+  if (!mine || !opp) return false;
+  var forward = p === mine.pid && i === mine.i && tp === opp.pid && ti === opp.i;
+  var back = p === opp.pid && i === opp.i && tp === mine.pid && ti === mine.i;
+  if (!forward && !back) return false;
+  confirmKingTrade();
+  return true;
+}
+window.addEventListener("pointermove", onDragMove, { passive: false });
+window.addEventListener("pointerup", onDragUp);
+window.addEventListener("pointercancel", onDragCancel);
+
 function renderOnline() {
   if (!online) return;
+  if (drag && drag.started) { renderQueued = true; return; }
   document.getElementById("inviteBox").style.display = "block";
   document.getElementById("inviteCode").textContent = online.code || "";
   var link = location.origin + "/declare/index.html?join=" + (online.code || "");
@@ -878,9 +1477,8 @@ function renderOnline() {
   document.getElementById("table").style.display = "block";
   var you = online.you;
   var memorizing = online.phase === "memorize";
-  var myTurn = online.turn === you && online.phase !== "reveal" && online.phase !== "keepBoth" && online.phase !== "peekReveal" && !memorizing;
-  var acting = myTurn && online.phase === "act";
-  var canPick = myTurn && online.phase === "draw" && online.free && online.pileTop;
+  var ctx = playCtx();
+  var myTurn = !!(ctx && ctx.myTurn);
   if (memorizing) {
     var readyArr = online.memorizeReady || [];
     var myReady = !!readyArr[you];
@@ -893,72 +1491,12 @@ function renderOnline() {
       startMemorizeTicker(online.memorizeEndsAt, null);
     }
     document.getElementById("who").textContent = "Memorize phase";
-    disablePlayButtons(true);
-    document.getElementById("confirmTrade").style.display = "none";
-    document.getElementById("skipTrade").style.display = "none";
-    document.getElementById("passChain").style.display = "none";
+    syncChrome(null, true);
   } else {
     setMemorizeBar(false);
     stopMemorizeTicker();
     document.getElementById("who").textContent = online.phase === "reveal" ? "Round over" : (online.players[online.turn].name + (myTurn ? " (you)" : "") + (online.declarer !== null ? " · final (declarer locked)" : ""));
-    document.getElementById("draw").disabled = !(myTurn && online.phase === "draw");
-    document.getElementById("claim").disabled = !canPick;
-    document.getElementById("call").disabled = !(myTurn && online.phase === "draw" && online.declarer === null);
-    document.getElementById("leave").disabled = !acting;
-    document.getElementById("swap").disabled = !acting;
-    document.getElementById("discard").disabled = !(acting || canPick);
-    var canPower = acting && online.pileTop && isPowerRank(online.pileTop.r);
-    if (canPower && online.pileTop.r !== "10" && online.declarer !== null) {
-      var hasOpp = false;
-      for (var oi = 0; oi < online.players.length; oi++) {
-        var op = online.players[oi];
-        if (op.id === online.turn || op.id === online.declarer) continue;
-        if (op.slots && op.slots.some(function(c) { return !!c; })) { hasOpp = true; break; }
-      }
-      if (!hasOpp) canPower = false;
-    }
-    document.getElementById("power").disabled = !canPower;
-    var canKingTrade = online.phase === "power" && online.powerStep === "k-trade" && myTurn;
-    var conf = document.getElementById("confirmTrade");
-    var skip = document.getElementById("skipTrade");
-    conf.style.display = canKingTrade ? "" : "none";
-    conf.disabled = !canKingTrade;
-    skip.style.display = canKingTrade ? "" : "none";
-    skip.disabled = !canKingTrade;
-    if (online.phase === "power" || online.phase === "keepBoth" || online.phase === "peekReveal" || online.phase === "dumpGive") {
-      document.getElementById("draw").disabled = true;
-      document.getElementById("claim").disabled = true;
-      document.getElementById("call").disabled = true;
-      document.getElementById("leave").disabled = true;
-      document.getElementById("swap").disabled = true;
-      document.getElementById("discard").disabled = true;
-      document.getElementById("power").disabled = true;
-    }
-    var pc2 = document.getElementById("passChain");
-    if (online.phase === "chain") {
-      pc2.style.display = "";
-      pc2.disabled = !myTurn;
-      document.getElementById("draw").disabled = true;
-      document.getElementById("claim").disabled = true;
-      document.getElementById("call").disabled = true;
-      document.getElementById("leave").disabled = true;
-      document.getElementById("swap").disabled = true;
-      document.getElementById("discard").disabled = true;
-      document.getElementById("power").disabled = true;
-    } else if (online.phase === "dumpGive") {
-      pc2.style.display = "none";
-      pc2.disabled = true;
-      document.getElementById("draw").disabled = true;
-      document.getElementById("claim").disabled = true;
-      document.getElementById("call").disabled = true;
-      document.getElementById("leave").disabled = true;
-      document.getElementById("swap").disabled = true;
-      document.getElementById("discard").disabled = true;
-      document.getElementById("power").disabled = true;
-    } else {
-      pc2.style.display = "none";
-      pc2.disabled = true;
-    }
+    syncChrome(ctx, false);
   }
   say(online.log || "");
   var center = document.getElementById("center");
@@ -966,14 +1504,7 @@ function renderOnline() {
   if (!memorizing) {
     var pile = document.createElement("div");
     pile.className = "pile";
-    if (online.pileUnder) {
-      var under = cardEl(online.pileUnder, true, false);
-      under.style.left = "0"; under.style.top = "12px";
-      pile.appendChild(under);
-    }
-    var face = cardEl(online.pileTop, true, false);
-    face.style.left = "18px"; face.style.top = "0";
-    pile.appendChild(face);
+    mountPile(pile, online.pileTop, online.pileUnder);
     center.appendChild(pile);
   }
   var seatsEl = document.getElementById("seats");
@@ -988,16 +1519,12 @@ function renderOnline() {
     var cols = Math.max(2, Math.ceil(player.slots.length / 2));
     grid.style.gridTemplateColumns = "repeat(" + cols + ", 72px)";
     player.slots.forEach(function(c, i) {
-      var known = c && c.known;
-      var highlight = !memorizing && !online.pending && (online.phase === "pick" || online.phase === "power" || online.phase === "chain" || online.phase === "dumpGive" || online.phase === "act" || (online.phase === "draw" && online.free)) && online.pick && online.pick.indexOf(player.id + ":" + i) >= 0;
-      var el = cardEl(c && known ? c : c ? {hidden:true} : null, !!(c && known), highlight);
+      var flash = keepBothFlash(ctx, player.id, i);
+      var known = !!(c && c.known) || flash;
+      var shown = !c ? null : (known ? c : { hidden: true });
+      var el = cardEl(shown, known && !!c, !memorizing && slotWantsPick(ctx, player.id, i), flash);
       if (!c) el.textContent = "·";
-      else if (!known) { el.className = "card back"; el.textContent = "??"; }
-      el.setAttribute("data-p", player.id);
-      el.setAttribute("data-i", i);
-      el.onclick = function() {
-        if (mode === "online" && !memorizing && !(online && online.pending)) sendAction({ action: "card", i: i, p: player.id });
-      };
+      wireHandCard(el, player.id, i, memorizing);
       grid.appendChild(el);
     });
     seat.appendChild(grid);
@@ -1014,7 +1541,47 @@ function renderOnline() {
 }
 
 function doDraw() { if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
-function doPass() { requestChoice("pass"); }
+function doPass() {
+  if (mode === "online") {
+    if (!online || online.pending) return;
+    if (online.phase === "chain") { sendAction({ action: "passChain" }); return; }
+    if (online.phase === "power" && online.powerStep === "k-trade") { sendAction({ action: "skipTrade" }); return; }
+    requestChoice("pass");
+    return;
+  }
+  if (!G || G.pending || G.turn !== 0) return;
+  if (G.phase === "chain") return passChain();
+  if (G.phase === "power" && G.powerStep === "k-trade") return skipKingTrade();
+  requestChoice("pass");
+}
+function returnToSetup() {
+  cancelDrag();
+  stopMemorizeTicker();
+  stopActTicker();
+  clearKeepBothTimer();
+  clearPeekTimer();
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (tickTimeout) { clearTimeout(tickTimeout); tickTimeout = null; }
+  G = null;
+  online = null;
+  mode = "local";
+  roomCode = null;
+  mySeat = null;
+  seatToken = null;
+  var table = document.getElementById("table");
+  var setup = document.getElementById("setup");
+  if (table) table.style.display = "none";
+  if (setup) setup.style.display = "block";
+  var invite = document.getElementById("inviteBox");
+  if (invite) invite.style.display = "none";
+  setMemorizeBar(false);
+  err("");
+}
+function doQuit() {
+  var code = roomCode, seat = mySeat, token = seatToken, wasOnline = mode === "online" && roomCode && mySeat !== null && seatToken;
+  returnToSetup();
+  if (wasOnline) api("leave", { code: code, seat: seat, token: token }).catch(function() {});
+}
 function doClaim() { requestChoice("claim"); }
 function doArm(intent) {
   if (intent === "swap") return requestChoice("swap");
@@ -1048,8 +1615,10 @@ function doReady() {
 }
 function doRedeal() {
   stopMemorizeTicker();
+  stopActTicker();
+  cancelDrag();
   if (mode === "online") sendAction({ action: "redeal" });
-  else location.reload();
+  else if (G) deal(G.n);
 }
 function maybeEndLocalMemorize() {
   if (!G || G.phase !== "memorize") return;
@@ -1208,6 +1777,7 @@ function tryDumpOpponent(pid, i) {
   var card = G.players[pid].slots[i];
   if (!card) return false;
   if (card.r !== rank) {
+    if (G.phase === "chain") return false;
     wrongOppDumpKeepBoth(actor, pid, i);
     return true;
   }
@@ -1255,90 +1825,30 @@ function wrongOppDumpKeepBoth(actor, oppPid, slotI) {
 }
 function render() {
   if (mode === "online") return renderOnline();
+  if (!G) return;
+  if (drag && drag.started) { renderQueued = true; return; }
   var memorizing = G.phase === "memorize";
   var viewer = 0;
+  var ctx = playCtx();
   if (memorizing) {
     var myReady = !!(G.memorizeReady && G.memorizeReady[viewer]);
     var readyN = (G.memorizeReady || []).filter(Boolean).length;
     setMemorizeBar(true, "Memorize your bottom two cards. Ready: " + readyN + "/" + G.n, myReady);
     document.getElementById("who").textContent = "Memorize phase";
-    disablePlayButtons(true);
-    document.getElementById("confirmTrade").style.display = "none";
-    document.getElementById("skipTrade").style.display = "none";
-    document.getElementById("passChain").style.display = "none";
+    syncChrome(null, true);
   } else {
     setMemorizeBar(false);
     document.getElementById("who").textContent = G.phase === "reveal" ? "Round over" : (G.players[G.turn].name + (G.declarer !== null ? " · final (declarer locked)" : ""));
-    document.getElementById("draw").disabled = G.phase !== "draw" || cpu();
-    document.getElementById("claim").disabled = !canPick();
-    document.getElementById("call").disabled = G.phase !== "draw" || G.declarer !== null || cpu();
-    if (G.phase === "power" || G.phase === "keepBoth" || G.phase === "peekReveal" || G.phase === "dumpGive") {
-      document.getElementById("draw").disabled = true;
-      document.getElementById("claim").disabled = true;
-      document.getElementById("call").disabled = true;
-      document.getElementById("leave").disabled = true;
-      document.getElementById("swap").disabled = true;
-      document.getElementById("discard").disabled = true;
-      document.getElementById("power").disabled = true;
-    }
-    var pc = document.getElementById("passChain");
-    if (G.phase === "chain") {
-      pc.style.display = "";
-      pc.disabled = !!cpu();
-      document.getElementById("draw").disabled = true;
-      document.getElementById("claim").disabled = true;
-      document.getElementById("call").disabled = true;
-      document.getElementById("leave").disabled = true;
-      document.getElementById("swap").disabled = true;
-      document.getElementById("discard").disabled = true;
-      document.getElementById("power").disabled = true;
-    } else if (G.phase === "dumpGive") {
-      pc.style.display = "none";
-      pc.disabled = true;
-      document.getElementById("draw").disabled = true;
-      document.getElementById("claim").disabled = true;
-      document.getElementById("call").disabled = true;
-      document.getElementById("leave").disabled = true;
-      document.getElementById("swap").disabled = true;
-      document.getElementById("discard").disabled = true;
-      document.getElementById("power").disabled = true;
-    } else {
-      pc.style.display = "none";
-      pc.disabled = true;
-    }
     refreshActDumpPicks();
-    var acting = G.phase === "act" && !cpu();
-    var matchFree = canPick();
-    document.getElementById("leave").disabled = !acting;
-    document.getElementById("swap").disabled = !acting;
-    document.getElementById("discard").disabled = !(acting || matchFree);
-    var topCard = pileTop();
-    var canPower = acting && topCard && isPowerRank(topCard.r);
-    if (canPower && topCard.r !== "10" && !hasUnlockedOppCards(G.turn)) canPower = false;
-    document.getElementById("power").disabled = !canPower;
-    document.getElementById("power").style.display = "";
-    var canKingTrade = G.phase === "power" && G.powerStep === "k-trade";
-    var conf = document.getElementById("confirmTrade");
-    var skip = document.getElementById("skipTrade");
-    conf.style.display = canKingTrade ? "" : "none";
-    conf.disabled = !(canKingTrade && !cpu());
-    skip.style.display = canKingTrade ? "" : "none";
-    skip.disabled = !(canKingTrade && !cpu());
-    if (G.pending && !cpu()) disablePlayButtons(true);
+    syncChrome(ctx, false);
+    if (G.pending && G.turn === 0) disablePlayButtons(true);
   }
   var center = document.getElementById("center");
   center.innerHTML = "";
   if (!memorizing) {
     var pile = document.createElement("div");
     pile.className = "pile";
-    if (G.pile.length > 1) {
-      var under = cardEl(G.pile[G.pile.length - 2], true, false);
-      under.style.left = "0"; under.style.top = "12px";
-      pile.appendChild(under);
-    }
-    var face = cardEl(pileTop(), true, false);
-    face.style.left = "18px"; face.style.top = "0";
-    pile.appendChild(face);
+    mountPile(pile, pileTop(), G.pile.length > 1 ? G.pile[G.pile.length - 2] : null);
     center.appendChild(pile);
   }
   var seats = document.getElementById("seats");
@@ -1357,13 +1867,10 @@ function render() {
       var c = player.slots[i];
       var isBottomTwo = i >= G.cols && i < G.cols + 2;
       var memorizeReveal = memorizing && player.id === viewer && isBottomTwo;
-      var kb = G.keepBoth;
-      var keepFlash = G.phase === "keepBoth" && kb && player.id === kb.pid && (i === kb.handI || i === kb.placedI);
-      var known = c && (G.phase === "reveal" || c.known[viewer] || memorizeReveal || keepFlash);
-      var el = cardEl(c, known, !memorizing && !G.pending && (G.phase === "pick" || G.phase === "power" || G.phase === "chain" || G.phase === "dumpGive" || G.phase === "act" || (G.phase === "draw" && G.free)) && G.pick && G.pick.indexOf(player.id + ":" + i) >= 0);
-      el.setAttribute("data-p", player.id);
-      el.setAttribute("data-i", i);
-      el.onclick = memorizing ? null : onCard;
+      var flash = keepBothFlash(ctx, player.id, i);
+      var known = c && (G.phase === "reveal" || c.known[viewer] || memorizeReveal || flash);
+      var el = cardEl(c, known, !memorizing && slotWantsPick(ctx, player.id, i), flash);
+      wireHandCard(el, player.id, i, memorizing);
       grid.appendChild(el);
     }
     seat.appendChild(grid);
@@ -1372,17 +1879,18 @@ function render() {
   if (memorizing) showChoiceUi(null, null, false, "", null);
   else showChoiceUi(G.pending, G.actEndsAt, !cpu(), pileTop() ? label(pileTop()) : "", expireLocalAct);
 }
-function cardEl(c, known, pick) {
+function cardEl(c, known, pick, flash) {
   var el = document.createElement("button");
   el.type = "button";
   el.className = "card";
   if (!c || c.hidden) {
-    if (!c) { el.textContent = "·"; return el; }
-    el.className += " back"; el.textContent = "??"; return el;
+    if (!c) { el.textContent = "·"; if (flash) el.className += " flash"; return el; }
+    el.className += " back"; el.textContent = "??"; if (flash) el.className += " flash"; return el;
   }
   if (!known) { el.className += " back"; el.textContent = "??"; }
   else { el.textContent = label(c); if (c.s === "H" || c.s === "D") el.className += " red"; el.className += " known"; }
   if (pick) el.className += " pick";
+  if (flash) el.className += " flash";
   return el;
 }
 function score(p) { var s = 0; for (var i = 0; i < p.slots.length; i++) if (p.slots[i]) s += val(p.slots[i]); return s; }
@@ -1662,6 +2170,7 @@ function swapIntoHand(pid, i) {
   return taken;
 }
 function onCard(ev) {
+  if (suppressClick) return;
   try {
     var pid = Number(ev.currentTarget.getAttribute("data-p"));
     var i = Number(ev.currentTarget.getAttribute("data-i"));
