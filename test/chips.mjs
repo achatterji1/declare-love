@@ -7,8 +7,11 @@ import {
   makeDeal,
   moveClockMs,
   publicState,
+  endMemorize,
+  joinChipSeat,
   leaveSeat,
   reveal,
+  startGame,
 } from "../src/lib/declare-engine.ts";
 import {
   CLAIM_AMOUNT,
@@ -494,6 +497,129 @@ function testOffTurnGiveTimeoutPicksACard() {
   assert.equal(hiddenRank(publicState(room, 2), 1, 2), undefined);
 }
 
+function testPlayingTableDoesNotTakeALateJoiner() {
+  const room = room4();
+  room.G.players[1].declared = true;
+  room.G.players[1].slots[0].known = [true, true, true, true];
+  room.G.players[1].slots[0].seen = [true, true, true, true];
+  leaveSeat(room, 1);
+  const hand = JSON.stringify(room.G.players[1]);
+  const pot = room.pot;
+  const stakes = JSON.stringify(room.stakes);
+  assert.equal(room.seats[1], null);
+  assert.equal(room.seats.filter((seat) => seat && seat.computer).length, 0);
+  assert.throws(
+    () => joinChipSeat(room, { name: "Eve", token: "e", playerId: "eve" }),
+    /already started/,
+  );
+  assert.equal(room.seats[1], null);
+  assert.equal(JSON.stringify(room.G.players[1]), hand);
+  assert.equal(room.G.players[1].declared, true);
+  assert.equal(room.pot, pot);
+  assert.equal(JSON.stringify(room.stakes), stakes);
+  assert.equal(room.seats.some((seat) => seat && seat.playerId === "eve"), false);
+
+  room.status = "ended";
+  assert.throws(
+    () => joinChipSeat(room, { name: "Eve", token: "e", playerId: "eve" }),
+    /already started/,
+  );
+  assert.equal(room.seats[1], null);
+  assert.equal(JSON.stringify(room.G.players[1]), hand);
+
+  const lobbyRoom = {
+    code: "OPEN",
+    n: 4,
+    cardsN: 4,
+    status: "lobby",
+    version: 1,
+    G: null,
+    seats: [{ name: "Ann", token: "a", playerId: "ann" }, null, null, null],
+    tier: "bronze",
+    pot: 500,
+    buyIn: 500,
+    stakes: [{ playerId: "ann", seat: 0, amount: 500 }],
+    payouts: null,
+  };
+  const seat = joinChipSeat(lobbyRoom, { name: "Eve", token: "e", playerId: "eve" });
+  assert.equal(seat, 1);
+  assert.equal(lobbyRoom.status, "lobby");
+  assert.equal(lobbyRoom.G, null);
+  assert.equal(lobbyRoom.pot, 1000);
+  assert.equal(lobbyRoom.stakes.length, 2);
+
+  const playing = trySit(
+    { status: "playing", seats: [null, null, null, null], pot: 0, buyIn: 500, stakes: [] },
+    createWallet("eve"),
+    "Eve",
+    "e",
+  );
+  assert.equal(playing.ok, false);
+  assert.equal(playing.wallet.chips, 10000);
+}
+
+function testEmptySeatNeverTakesTheTurnOrCenterCard() {
+  const room = room4();
+  room.seats[0] = null;
+  room.G.players[0].name = "Open";
+  room.G.phase = "memorize";
+  room.G.turn = 0;
+  room.G.memorizeReady = [true, true, true, true];
+  room.G.memorizeEndsAt = 1;
+  room.G.pile = [{ r: "9", s: "C" }];
+  room.G.turnEndsAt = null;
+  room.G.turnWaitKey = null;
+  const openSlots = JSON.stringify(room.G.players[0].slots);
+  endMemorize(room);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.ok(room.seats[room.G.turn]);
+  applyTimers(room, 5);
+  assert.equal(room.G.turn, 1);
+  assert.equal(JSON.stringify(room.G.players[0].slots), openSlots);
+  assert.ok(room.G.turnEndsAt > 5);
+  const ends = room.G.turnEndsAt;
+  applyTimers(room, ends);
+  assert.equal(JSON.stringify(room.G.players[0].slots), openSlots);
+  assert.equal(room.G.keepBoth.pid, 1);
+  assert.ok(room.G.players[1].slots.some((c) => c && c.r === "9" && c.s === "C"));
+  assert.equal(room.G.pile.some((c) => c && c.r === "9" && c.s === "C"), false);
+
+  const armed = room4();
+  armed.seats[0] = null;
+  armed.G.phase = "act";
+  armed.G.turn = 0;
+  armed.G.pile = [{ r: "9", s: "C" }];
+  armed.G.turnEndsAt = 10;
+  armed.G.turnWaitKey = "0|act|||";
+  const armedOpen = JSON.stringify(armed.G.players[0].slots);
+  applyTimers(armed, 10);
+  assert.equal(JSON.stringify(armed.G.players[0].slots), armedOpen);
+  assert.equal(armed.G.pile.some((c) => c.r === "9" && c.s === "C"), true);
+  assert.equal(armed.G.turn, 1);
+  assert.equal(armed.G.phase, "draw");
+  assert.ok(armed.G.turnEndsAt > 10);
+  assert.equal(armed.G.keepBoth, null);
+
+  const redeal = room4();
+  redeal.seats[0] = null;
+  redeal.status = "ended";
+  redeal.G.phase = "reveal";
+  startGame(redeal);
+  assert.equal(redeal.status, "playing");
+  assert.equal(redeal.G.phase, "memorize");
+  assert.equal(redeal.G.turn, 1);
+  assert.equal(redeal.G.players[0].name, "Open");
+  redeal.G.memorizeEndsAt = 1;
+  redeal.G.pile = [{ r: "4", s: "D" }];
+  const dealtOpen = JSON.stringify(redeal.G.players[0].slots);
+  applyTimers(redeal, 5);
+  assert.equal(redeal.G.turn, 1);
+  assert.equal(JSON.stringify(redeal.G.players[0].slots), dealtOpen);
+  assert.ok(redeal.G.turnEndsAt > 5);
+  assert.equal(redeal.G.pile.some((c) => c.r === "4" && c.s === "D"), true);
+}
+
 testWalletStartsAtTenThousand();
 testClaimTimerStartsOnlyWhenClaimed();
 testBuyInAndWinnerTakesPot();
@@ -503,6 +629,8 @@ testComputerTiePaysTheWholePotToHumans();
 testMidHandQuitForfeitsOnlyThatSeat();
 testQuitThenComputerOnlyWin();
 testChipTablesWaitForPlayers();
+testPlayingTableDoesNotTakeALateJoiner();
+testEmptySeatNeverTakesTheTurnOrCenterCard();
 testTierClocks();
 testMoveClockByTierKeepsCenterCard();
 testOffTurnKnownMatchOnly();

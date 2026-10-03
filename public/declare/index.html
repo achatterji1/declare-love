@@ -428,7 +428,7 @@
       <div class="chip-head">
         <div>
           <h2>Chip tables</h2>
-          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. A table waits for players, up to 4.</p>
+          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. A table waits for players, up to 4. Once the hand starts, no one else can sit. A player who leaves is out for that hand: the seat stays empty and their buy-in stays in the pot.</p>
         </div>
         <div class="wallet-box">
           <div>Wallet <strong id="walletChips">—</strong></div>
@@ -1774,7 +1774,11 @@ function renderOnline() {
   document.getElementById("inviteCode").textContent = online.code || "";
   var link = location.origin + "/declare/index.html?join=" + (online.code || "");
   var inviteLink = document.getElementById("inviteLink");
-  if (online.tier) inviteLink.textContent = "Friends join this table from the chip lobby. The buy-in comes out of their wallet.";
+  if (online.tier) {
+    inviteLink.textContent = online.waiting
+      ? "Friends can sit from the chip lobby until the hand starts. The buy-in comes out of their wallet."
+      : "This hand is closed. A player who leaves is out, and that seat stays empty.";
+  }
   else inviteLink.innerHTML = 'Send this link: <a href="' + link + '" style="color:#d96f58">' + link + "</a>";
   if (online.waiting) {
     document.getElementById("setup").style.display = "block";

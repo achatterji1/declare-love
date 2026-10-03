@@ -174,6 +174,31 @@ function awardPot(room: Room, scores: number[]): number {
   return pot;
 }
 
+// A chip table takes players only in the lobby. Once the hand starts, the
+// roster is closed: a quit seat stays empty, and nobody is dealt into that hand.
+export function joinChipSeat(
+  room: Room,
+  person: { name: string; token: string; playerId: string },
+): number {
+  if (!room.tier || room.status !== "lobby") throw new Error("That hand has already started.");
+  if (room.seats.some((seat) => seat && seat.playerId === person.playerId)) {
+    throw new Error("You are already seated.");
+  }
+  const idx = room.seats.findIndex((seat) => !seat);
+  if (idx < 0) throw new Error("That table is full.");
+  const buyIn = room.buyIn || 0;
+  room.seats[idx] = {
+    name: person.name,
+    token: person.token,
+    playerId: person.playerId,
+    computer: false,
+  };
+  room.pot = (room.pot || 0) + buyIn;
+  room.stakes = [...(room.stakes || []), { playerId: person.playerId, seat: idx, amount: buyIn }];
+  if (room.seats.every(Boolean)) startGame(room);
+  return idx;
+}
+
 // Lobby leave refunds that one buy-in. A chip seat that leaves after the hand
 // starts forfeits that buy-in and stays empty. The hand goes on with the
 // people still sitting.
@@ -593,6 +618,7 @@ export function endMemorize(room: Room): void {
   G.memorizeReady = null;
   G.memorizeEndsAt = null;
   G.log = "Cards are face-down — remember them. Draw, Pick a passed/discarded center card, or Discard a match.";
+  skipEmptyTurn(room);
 }
 
 function startPeekReveal(room: Room, peeker: number, targetPid: number, i: number, next: string, prefix?: string): void {
@@ -722,6 +748,7 @@ function turnWaitKey(G: Game): string {
 function syncTurnClock(room: Room, now = Date.now()): void {
   const G = room.G;
   if (!G) return;
+  skipEmptyTurn(room);
   if (room.status !== "playing") {
     G.turnEndsAt = null;
     G.turnWaitKey = null;
@@ -769,9 +796,43 @@ function clearMoveState(G: Game): void {
   G.powerMine = null;
 }
 
+// An empty chip seat is not a player. Step off it before a clock starts.
+function advanceToOccupiedSeat(room: Room): void {
+  const G = room.G;
+  if (!G || !room.tier || room.seats[G.turn] || !room.seats.some(Boolean)) return;
+  for (let step = 0; step < G.n; step++) {
+    G.turn = (G.turn + 1) % G.n;
+    if (room.seats[G.turn]) return;
+  }
+}
+
+function skipEmptyTurn(room: Room): void {
+  const G = room.G;
+  if (!G || !room.tier || room.seats[G.turn] || !room.seats.some(Boolean)) return;
+  if (G.phase === "memorize") {
+    advanceToOccupiedSeat(room);
+    return;
+  }
+  if (G.phase === "reveal") return;
+  if (G.declarer !== null) {
+    nextTurn(room);
+    return;
+  }
+  advanceToOccupiedSeat(room);
+  clearMoveState(G);
+  G.free = false;
+  G.phase = "draw";
+  G.turnEndsAt = null;
+  G.turnWaitKey = null;
+}
+
 // Take the center card into the current player's hand. The keep-both flash ends the turn.
 function keepCenterCard(room: Room, now = Date.now()): void {
   const G = room.G!;
+  if (room.tier && !room.seats[G.turn]) {
+    skipEmptyTurn(room);
+    return;
+  }
   const drawn = pileTop(G);
   if (!drawn) return;
   const pid = G.turn;
@@ -791,6 +852,12 @@ function keepCenterCard(room: Room, now = Date.now()): void {
 // The move clock ran out. A center card is taken and the turn ends. With no center card, the turn still advances.
 function autoPass(room: Room, now = Date.now()): void {
   const G = room.G!;
+  if (room.tier && !room.seats[G.turn]) {
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
+    skipEmptyTurn(room);
+    return;
+  }
   G.turnEndsAt = null;
   G.turnWaitKey = null;
   G.pending = null;
@@ -1139,8 +1206,10 @@ export function startGame(room: Room): void {
   room.G = makeDeal(room.n, room.cardsN);
   for (let i = 0; i < room.n; i++) {
     if (room.seats[i]) room.G.players[i].name = room.seats[i]!.name;
+    else if (room.tier) room.G.players[i].name = "Open";
   }
   room.status = "playing";
+  skipEmptyTurn(room);
 }
 
 export function finish(room: Room): void {
