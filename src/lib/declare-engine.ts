@@ -1086,9 +1086,9 @@ function completeDumpGive(room: Room, giveI: number, now = Date.now()): void {
   const oppName = G.players[dg.oppPid].name;
   G.dumpGive = null;
   if (dg.offTurn) {
-    const endedChain = dg.resumePhase === "chain";
+    const consumedDraw = dg.resumePhase === "act" || dg.resumePhase === "chain";
     G.log = "Gave a card to " + oppName + ".";
-    if (endedChain) {
+    if (consumedDraw) {
       G.dumpGive = null;
       G.free = true;
       G.phase = "draw";
@@ -1108,7 +1108,7 @@ function autoGiveOffTurn(room: Room, now: number): void {
   const giveI = G.players[dg.actor].slots.findIndex((c) => !!c);
   if (giveI < 0) {
     G.log = "No card left to give.";
-    if (dg.resumePhase === "chain") {
+    if (dg.resumePhase === "act" || dg.resumePhase === "chain") {
       G.dumpGive = null;
       G.free = true;
       return finish(room);

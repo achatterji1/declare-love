@@ -475,8 +475,8 @@ function testOffTurnKnownMatchOnly() {
 
   const beforeGive = legal.G.turn;
   assert.equal(handleAction(legal, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
-  assert.equal(legal.G.phase, "act");
-  assert.equal(legal.G.turn, beforeGive);
+  assert.equal(legal.G.phase, "draw");
+  assert.equal(legal.G.turn, (beforeGive + 1) % legal.G.n);
   assert.equal(legal.G.players[1].slots[0].r, "2");
   assert.ok(legal.G.players[1].slots[0].known.every((flag) => flag === false));
   assert.ok(legal.G.players[1].slots[0].seen.every((flag) => flag === false));
@@ -491,8 +491,8 @@ function testOffTurnGiveTimeoutPicksACard() {
   assert.equal(room.G.phase, "dumpGive");
   assert.equal(room.G.players[2].slots[0].r, "2");
   assert.equal(applyTimers(room, ends), true);
-  assert.equal(room.G.phase, "act");
-  assert.equal(room.G.turn, 0);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
   assert.equal(room.G.players[2].slots[0], null);
   assert.equal(room.G.players[1].slots[0].r, "2");
   assert.ok(room.G.players[1].slots[0].seen.every((flag) => flag === false));
@@ -648,6 +648,26 @@ function chainRaceRoom() {
   return room;
 }
 
+function testDrawnCardOffTurnDiscardEndsTheTurn() {
+  const room = room4();
+  assert.equal(room.G.phase, "act");
+  room.G.players[0].slots[0] = card("7", "S", 4);
+  room.G.pick = ["0:0", "1:0"];
+  assert.equal(handleAction(room, 2, { action: "offDiscard", p: 1, i: 0 }), true);
+  assert.equal(room.G.phase, "dumpGive");
+  assert.equal(room.G.dumpGive.resumePhase, "act");
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.players[0].slots[0].r, "7");
+  assert.equal(handleAction(room, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.players[0].slots[0].r, "7");
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.players[0].slots[0].r, "7");
+}
+
 function testOneDiscardPerCenterCard() {
   const raced = chainRaceRoom();
   assert.equal(handleAction(raced, 2, { action: "offDiscard", p: 1, i: 0 }), true);
@@ -717,6 +737,7 @@ function testSignInGatesPlay() {
 
 testOffTurnKnownMatchOnly();
 testOffTurnGiveTimeoutPicksACard();
+testDrawnCardOffTurnDiscardEndsTheTurn();
 testOneDiscardPerCenterCard();
 testClaimTableMissingIsRecognized();
 testLobbyCopyStaysQuiet();
