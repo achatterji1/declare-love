@@ -100,6 +100,21 @@
   .join-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
   .join-row button, .join-row input { margin: 0; }
   #choice { grid-column: 1 / -1; min-height: 1.3em; margin: 0; padding: 14px 28px; border-top: 1px solid var(--line); background: var(--panel-soft); color: var(--muted); text-align: center; font-size: .9rem; }
+  .chip-lobby { padding: 22px 28px 8px; border-top: 1px solid var(--line); background: #fbf8f3; }
+  .chip-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+  .chip-head p { margin: 6px 0 0; color: var(--muted); max-width: 42em; }
+  .wallet-box { text-align: right; min-width: 200px; }
+  .wallet-box strong { font-size: 1.35rem; }
+  #claimHint { color: var(--muted); font-size: .85rem; min-height: 1.2em; }
+  .tier-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }
+  .tier-row button { margin: 0; min-height: 68px; }
+  .tier-row .buy { display: block; color: var(--muted); font-size: .78rem; font-weight: 650; }
+  #chipStatus { color: var(--olive-dark); font-weight: 650; min-height: 1.2em; }
+  .open-tables { display: grid; gap: 8px; margin: 8px 0 16px; }
+  .table-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .table-row div { color: var(--muted); }
+  .card.remembered { box-shadow: inset 0 0 0 2px var(--olive); }
+  #chipBar { margin: 0 0 8px; color: var(--olive-dark); font-weight: 700; }
   .players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .seat {
     min-width: 0;
@@ -353,6 +368,10 @@
     .mode { padding: 22px 20px; }
     .mode + .mode { border-left: 0; border-top: 1px solid var(--line); }
     #choice { padding: 13px 20px; }
+    .chip-lobby { padding: 18px 20px 4px; }
+    .chip-head, .wallet-box { display: block; text-align: left; }
+    .wallet-box { margin-top: 12px; }
+    .tier-row { grid-template-columns: 1fr 1fr; }
     .players { grid-template-columns: 1fr; }
     .powers { grid-template-columns: 1fr; }
     .manual { padding: 10px; }
@@ -405,9 +424,31 @@
         </div>
       </article>
     </div>
+    <section class="chip-lobby" id="chipLobby">
+      <div class="chip-head">
+        <div>
+          <h2>Chip tables</h2>
+          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. A table waits for players, up to 4. Once the hand starts, no one else can sit. A player who leaves is out for that hand: the seat stays empty and their buy-in stays in the pot.</p>
+        </div>
+        <div class="wallet-box">
+          <div>Wallet <strong id="walletChips">—</strong></div>
+          <button type="button" id="claimBtn" onclick="claimBonus()">Claim 5000</button>
+          <div id="claimHint"></div>
+        </div>
+      </div>
+      <div class="tier-row">
+        <button type="button" data-tier="bronze" onclick="sitTier('bronze')">Bronze<span class="buy">500 chips · 30s</span></button>
+        <button type="button" data-tier="silver" onclick="sitTier('silver')">Silver<span class="buy">1000 chips · 30s</span></button>
+        <button type="button" data-tier="gold" onclick="sitTier('gold')">Gold<span class="buy">2500 chips · 30s</span></button>
+        <button type="button" data-tier="vip" onclick="sitTier('vip')">VIP<span class="buy">5000 chips · 15s</span></button>
+      </div>
+      <p id="chipStatus"></p>
+      <div id="openTables" class="open-tables"></div>
+    </section>
     <p id="choice">Four cards selected — choose a table to begin.</p>
   </section>
   <section id="table" class="panel" style="display:none">
+    <p id="chipBar" hidden></p>
     <div id="memorizeBar">
       <span id="memorizeTimer">0:30</span>
       <span class="hint" id="memorizeHint">Memorize your bottom two cards.</span>
@@ -641,6 +682,14 @@ var peekTimer = null;
 var KEEP_BOTH_MS = 4000;
 var PEEK_MS = 1300;
 var ACT_MS = 30000;
+var turnTimerSuffix = "to move";
+var cardMemory = {};
+var playerId = null;
+var chipWallet = null;
+var lobbyTimer = null;
+var lobbySeq = 0;
+var claimTicker = null;
+var TIER_BUY = { bronze: 500, silver: 1000, gold: 2500, vip: 5000 };
 
 function setCards(n) {
   cardsN = n;
@@ -732,7 +781,7 @@ function updateTurnTimerDisplay() {
   if (!turnTickerEnds || !turnTimerVisible) { el.textContent = ""; el.className = ""; return; }
   var left = turnTickerEnds - Date.now();
   el.className = left <= 10000 ? "on urgent" : "on";
-  el.textContent = formatCountdown(left) + " to move";
+  el.textContent = formatCountdown(left) + " " + (turnTimerSuffix || "to move");
 }
 function startTurnTicker(endsAt, onExpire) {
   stopTurnTicker();
@@ -757,7 +806,7 @@ function showTurnClock(endsAt, active, onExpire) {
   }
   if (Date.now() >= endsAt) {
     stopTurnTicker();
-    if (el && active) { el.className = "on urgent"; el.textContent = "0:00 to move"; }
+    if (el && active) { el.className = "on urgent"; el.textContent = "0:00 " + (turnTimerSuffix || "to move"); }
     if (onExpire) onExpire();
     return;
   }
@@ -879,7 +928,8 @@ function handleState(state, code) {
 function scheduleTick() {
   if (tickTimeout) { clearTimeout(tickTimeout); tickTimeout = null; }
   if (!online || !roomCode) return;
-  var times = [online.memorizeEndsAt, online.actEndsAt, online.phaseEndsAt, online.turnEndsAt].filter(Boolean);
+  var times = [online.memorizeEndsAt, online.actEndsAt, online.phaseEndsAt, online.turnEndsAt, online.snipeEndsAt].filter(Boolean);
+  if (online.dumpGive && online.dumpGive.endsAt) times.push(online.dumpGive.endsAt);
   var endsAt = times.length ? Math.min.apply(null, times) : null;
   if (!endsAt) return;
   var delay = Math.max(0, endsAt - Date.now()) + 150;
@@ -888,6 +938,7 @@ function scheduleTick() {
       if (!roomCode || mySeat === null) return null;
       return api("state", { code: roomCode, seat: mySeat, token: seatToken });
     }).then(function(res) {
+      noteWallet(res);
       if (res && res.state) handleState(res.state);
     }).catch(function() {});
   }, delay);
@@ -898,7 +949,7 @@ function subscribe() {
   pollTimer = setInterval(function() {
     if (!roomCode || mySeat === null) return;
     api("state", { code: roomCode, seat: mySeat, token: seatToken })
-      .then(function(res) { handleState(res.state); })
+      .then(function(res) { noteWallet(res); handleState(res.state); })
       .catch(function() {});
   }, 1000);
   if (window.supabase && cfg && cfg.url && cfg.key) {
@@ -923,7 +974,152 @@ window.addEventListener("pagehide", function() {
 function playerName() {
   return (document.getElementById("name").value || "Player").trim().slice(0, 16);
 }
-
+function tierLabel(tier) {
+  if (tier === "bronze") return "Bronze";
+  if (tier === "silver") return "Silver";
+  if (tier === "gold") return "Gold";
+  if (tier === "vip") return "VIP";
+  return "Table";
+}
+function ensurePlayerId() {
+  if (playerId) return playerId;
+  try { playerId = localStorage.getItem("declare-player-id"); } catch (e) { playerId = null; }
+  if (!playerId && window.crypto && crypto.randomUUID) playerId = crypto.randomUUID();
+  if (!playerId) playerId = "00000000-0000-4000-8000-" + String(Date.now()).slice(-12).padStart(12, "0");
+  try { localStorage.setItem("declare-player-id", playerId); } catch (e) {}
+  return playerId;
+}
+function setChipStatus(text) {
+  var el = document.getElementById("chipStatus");
+  if (el) el.textContent = text || "";
+}
+function paintTiers() {
+  var buttons = document.querySelectorAll(".tier-row button[data-tier]");
+  for (var i = 0; i < buttons.length; i++) {
+    var tier = buttons[i].getAttribute("data-tier");
+    buttons[i].disabled = !!(chipWallet && chipWallet.chips < TIER_BUY[tier]);
+  }
+}
+function paintClaim() {
+  var btn = document.getElementById("claimBtn");
+  var hint = document.getElementById("claimHint");
+  if (!chipWallet || !btn) return;
+  var ready = chipWallet.claimAvailableAt == null || Date.now() >= Number(chipWallet.claimAvailableAt);
+  btn.disabled = !ready;
+  if (!hint) return;
+  if (ready) hint.textContent = "Claim 5000 chips. The next 4-hour window starts when you claim.";
+  else hint.textContent = "Next claim in " + formatCountdown(Number(chipWallet.claimAvailableAt) - Date.now()) + ". Waiting does not refresh the window.";
+}
+function paintChipBar() {
+  var bar = document.getElementById("chipBar");
+  if (!bar) return;
+  if (mode !== "online" || !online || !online.tier) {
+    bar.hidden = true;
+    bar.textContent = "";
+    return;
+  }
+  var clock = online.actMs === 15000 ? "15-second" : "30-second";
+  bar.hidden = false;
+  bar.textContent = tierLabel(online.tier) + " · pot " + (online.pot || 0) + " · wallet " + (chipWallet ? chipWallet.chips : "—") + " · " + clock + " move clock";
+}
+function showWallet(wallet) {
+  if (!wallet) return;
+  chipWallet = wallet;
+  if (wallet.id && wallet.id !== playerId) {
+    playerId = wallet.id;
+    try { localStorage.setItem("declare-player-id", playerId); } catch (e) {}
+  }
+  var el = document.getElementById("walletChips");
+  if (el) el.textContent = String(wallet.chips);
+  paintClaim();
+  paintTiers();
+  paintChipBar();
+}
+function noteWallet(res) {
+  if (res && res.wallet) showWallet(res.wallet);
+}
+function renderOpenTables(tables) {
+  var box = document.getElementById("openTables");
+  if (!box) return;
+  box.textContent = "";
+  if (!tables.length) {
+    var empty = document.createElement("p");
+    empty.textContent = "No open tables. Sit at a tier to open one.";
+    box.appendChild(empty);
+    return;
+  }
+  tables.forEach(function(table) {
+    var row = document.createElement("div");
+    row.className = "table-row";
+    var info = document.createElement("div");
+    var title = document.createElement("strong");
+    title.textContent = table.label + " · " + table.code + " · " + table.buyIn + " buy-in · pot " + table.pot;
+    info.appendChild(title);
+    var seats = document.createElement("div");
+    (table.seats || []).forEach(function(seat) {
+      var span = document.createElement("span");
+      span.textContent = (seat.open ? "Open" : (seat.computer ? "Computer" : (seat.name || "Player"))) + "  ";
+      seats.appendChild(span);
+    });
+    info.appendChild(seats);
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Join";
+    btn.onclick = function() { sitCode(table.code); };
+    row.appendChild(info);
+    row.appendChild(btn);
+    box.appendChild(row);
+  });
+}
+function loadChipLobby() {
+  ensurePlayerId();
+  var seq = ++lobbySeq;
+  return api("chips", { op: "lobby", playerId: playerId }).then(function(res) {
+    if (seq !== lobbySeq) return;
+    if (res.wallet) showWallet(res.wallet);
+    renderOpenTables(res.tables || []);
+  }).catch(function() {});
+}
+function claimBonus() {
+  ensurePlayerId();
+  api("chips", { op: "claim", playerId: playerId }).then(function(res) {
+    if (res.wallet) showWallet(res.wallet);
+    var hint = document.getElementById("claimHint");
+    if (hint && res.claimed) hint.textContent = "5000 chips added. The next 4 hours start now.";
+  }).catch(function(e) {
+    var hint = document.getElementById("claimHint");
+    if (hint) hint.textContent = e.message;
+  });
+}
+function enterTable(res) {
+  cardMemory = {};
+  mode = "online";
+  err("");
+  roomCode = res.code;
+  mySeat = res.seat;
+  seatToken = res.token;
+  if (res.wallet) showWallet(res.wallet);
+  ensureWs(function() {
+    subscribe();
+    handleState(res.state, res.code);
+  });
+}
+function sitTier(tier) {
+  err("");
+  setChipStatus("");
+  ensurePlayerId();
+  api("chips", { op: "sit", playerId: playerId, name: playerName(), tier: tier }).then(enterTable).catch(function(e) {
+    setChipStatus(e.message);
+  });
+}
+function sitCode(code) {
+  err("");
+  setChipStatus("");
+  ensurePlayerId();
+  api("chips", { op: "sit", playerId: playerId, name: playerName(), code: code }).then(enterTable).catch(function(e) {
+    setChipStatus(e.message);
+  });
+}
 function createInvite() {
   mode = "online";
   err("");
@@ -958,6 +1154,7 @@ function sendAction(payload) {
   payload.seat = mySeat;
   payload.token = seatToken;
   return api("action", payload).then(function(res) {
+    noteWallet(res);
     handleState(res.state);
     return res;
   }).catch(function(e) {
@@ -1060,10 +1257,49 @@ function chainOppTargets(c) {
   }
   return out;
 }
+function offTurnWindow(c) {
+  if (!c || c.myTurn || c.pending || c.n !== 4 || !c.pileTop) return false;
+  if (c.phase === "act") return true;
+  if (c.phase === "draw" && c.free) return true;
+  return false;
+}
+function rememberedFace(slot, owner, you, n) {
+  if (!slot || slot.known || !slot.id || n !== 4 || owner === you) return null;
+  var mem = cardMemory[slot.id];
+  if (!mem || !mem.r) return null;
+  return { r: mem.r, s: mem.s, known: true, remembered: true, id: slot.id };
+}
+function rememberState(state) {
+  var players = state && state.players;
+  if (!players || players.length !== 4) return;
+  players.forEach(function(player) {
+    (player.slots || []).forEach(function(slot) {
+      if (slot && slot.id && slot.r) cardMemory[slot.id] = { r: slot.r, s: slot.s };
+    });
+  });
+}
+function faceForMove(c, p, i) {
+  var pl = playerById(c, p);
+  var slot = pl && pl.slots ? pl.slots[i] : null;
+  if (!slot) return null;
+  if (slot.r) return slot;
+  return rememberedFace(slot, p, c.you, c.n);
+}
 function legalMovesFrom(source) {
   var c = playCtx();
-  if (!c || !c.myTurn || !source || c.pending) return [];
+  if (!c || !source || c.pending) return [];
   if (c.phase === "memorize" || c.phase === "reveal" || c.phase === "keepBoth" || c.phase === "peekReveal") return [];
+  if (!c.myTurn) {
+    var off = [];
+    if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you && source.zone === "hand" && source.p === c.you && occupied(c, source.p, source.i)) {
+      off.push({ gesture: "give", targets: [{ zone: "hand", p: c.dumpGive.oppPid, i: c.dumpGive.emptiedI }] });
+    }
+    if (offTurnWindow(c) && source.zone === "hand" && source.p !== c.you && occupied(c, source.p, source.i)) {
+      var seen = faceForMove(c, source.p, source.i);
+      if (seen && seen.r === c.pileTop.r) off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
+    }
+    return off;
+  }
   var moves = [];
   if (source.zone === "center") {
     if (!c.pileTop) return moves;
@@ -1105,7 +1341,13 @@ function dragHintFor(c) {
   if (!c || c.phase === "memorize") return "";
   if (c.phase === "reveal") return "Round over.";
   if (c.phase === "keepBoth" || c.phase === "peekReveal") return "";
-  if (!c.myTurn) return "Waiting for the other player.";
+  if (!c.myTurn) {
+    if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you) {
+      return "Drag one of your cards onto their empty slot. You have 5 seconds.";
+    }
+    if (offTurnWindow(c)) return "If you have seen a matching card in another hand, drag it onto the center. You then give them one of yours.";
+    return "Waiting for the other player.";
+  }
   if (c.phase === "dumpGive") return "Drag one of your cards onto the empty slot.";
   if (c.phase === "chain") return "Drag one matching card onto the center, or Pass.";
   if (c.phase === "power") {
@@ -1399,6 +1641,9 @@ function performDrag(move, source, target) {
   } else if (move.gesture === "dump") {
     payload.p = target.p;
     payload.i = target.i;
+  } else if (move.gesture === "offDump") {
+    payload.p = source.p;
+    payload.i = source.i;
   } else if (move.gesture === "qtrade") {
     if (source.zone === "hand" && source.p === c.you) {
       payload.p = source.p; payload.i = source.i; payload.tp = target.p; payload.ti = target.i;
@@ -1524,19 +1769,32 @@ window.addEventListener("pointercancel", onDragCancel);
 function renderOnline() {
   if (!online) return;
   if (drag && drag.started) { renderQueued = true; return; }
+  rememberState(online);
   document.getElementById("inviteBox").style.display = "block";
   document.getElementById("inviteCode").textContent = online.code || "";
   var link = location.origin + "/declare/index.html?join=" + (online.code || "");
-  document.getElementById("inviteLink").innerHTML = 'Send this link: <a href="' + link + '" style="color:#d96f58">' + link + "</a>";
+  var inviteLink = document.getElementById("inviteLink");
+  if (online.tier) {
+    inviteLink.textContent = online.waiting
+      ? "Friends can sit from the chip lobby until the hand starts. The buy-in comes out of their wallet."
+      : "This hand is closed. A player who leaves is out, and that seat stays empty.";
+  }
+  else inviteLink.innerHTML = 'Send this link: <a href="' + link + '" style="color:#d96f58">' + link + "</a>";
   if (online.waiting) {
     document.getElementById("setup").style.display = "block";
     document.getElementById("table").style.display = "none";
     setMemorizeBar(false);
     stopMemorizeTicker();
     var seats = (online.players || []).map(function(p) {
-      return (p.name || "…") + (p.ready ? " ready" : " waiting");
+      var name = p.vacant || !p.name ? "Open" : (p.computer ? "Computer" : p.name);
+      return name + (p.ready ? " seated" : " open");
     }).join(" · ");
     document.getElementById("lobby").textContent = "Lobby (" + (online.n || 2) + " seats): " + seats;
+    if (online.tier) {
+      var seated = (online.players || []).filter(function(p) { return p.ready && !p.vacant; }).length;
+      setChipStatus(tierLabel(online.tier) + " table " + (online.code || "") + ". Buy-in " + (online.buyIn || 0) + " is in the pot (" + (online.pot || 0) + "). Waiting for players (" + seated + "/4).");
+    }
+    paintChipBar();
     return;
   }
   document.getElementById("setup").style.display = "none";
@@ -1550,7 +1808,7 @@ function renderOnline() {
     var myReady = !!readyArr[you];
     var readyN = readyArr.filter(Boolean).length;
     var names = (online.players || []).map(function(p) {
-      return p.name + (p.memorizeReady ? " ✓" : " …");
+      return (p.computer ? "Computer" : p.name) + (p.memorizeReady ? " ✓" : " …");
     }).join(" · ");
     setMemorizeBar(true, "Memorize your bottom two. " + readyN + "/" + readyArr.length + " ready — " + names, myReady);
     if (online.memorizeEndsAt) {
@@ -1561,7 +1819,9 @@ function renderOnline() {
   } else {
     setMemorizeBar(false);
     stopMemorizeTicker();
-    document.getElementById("who").textContent = online.phase === "reveal" ? "Round over" : (online.players[online.turn].name + (myTurn ? " (you)" : "") + (online.declarer !== null ? " · final (declarer locked)" : ""));
+    var turnPlayer = online.players[online.turn];
+    var turnName = turnPlayer && turnPlayer.vacant ? "Open" : (turnPlayer && turnPlayer.computer ? "Computer" : (turnPlayer ? turnPlayer.name : ""));
+    document.getElementById("who").textContent = online.phase === "reveal" ? "Round over" : (turnName + (myTurn ? " (you)" : "") + (online.declarer !== null ? " · final (declarer locked)" : ""));
     syncChrome(ctx, false);
   }
   say(online.log || "");
@@ -1579,7 +1839,10 @@ function renderOnline() {
     var seat = document.createElement("div");
     seat.className = "seat" + (!memorizing && player.id === online.turn ? " on" : "") + (player.declared ? " locked" : "");
     var readyTag = memorizing ? (player.memorizeReady ? " · ready" : " · memorizing") : "";
-    seat.innerHTML = "<h3>" + player.name + (player.id === you ? " (you)" : "") + (player.declared ? " · declared (locked)" : "") + readyTag + (player.score != null ? " · " + player.score : "") + "</h3>";
+    var seatName = player.vacant ? "Open" : (player.computer ? "Computer" : (player.name || "Player"));
+    var heading = seatName + (player.id === you ? " (you)" : "") + (player.declared ? " · declared (locked)" : "") + readyTag + (player.score != null ? " · " + player.score : "");
+    seat.innerHTML = "<h3></h3>";
+    seat.querySelector("h3").textContent = heading;
     var grid = document.createElement("div");
     grid.className = "grid";
     var cols = Math.max(2, Math.ceil(player.slots.length / 2));
@@ -1587,8 +1850,10 @@ function renderOnline() {
     player.slots.forEach(function(c, i) {
       var flash = keepBothFlash(ctx, player.id, i);
       var known = !!(c && c.known) || flash;
-      var shown = !c ? null : (known ? c : { hidden: true });
-      var el = cardEl(shown, known && !!c, !memorizing && slotWantsPick(ctx, player.id, i), flash);
+      var memory = !known ? rememberedFace(c, player.id, you, (online.players || []).length) : null;
+      var shown = !c ? null : (known ? c : (memory || { hidden: true }));
+      var el = cardEl(shown, (known || !!memory) && !!c, !memorizing && slotWantsPick(ctx, player.id, i), flash);
+      if (memory) el.classList.add("remembered");
       if (!c) el.textContent = "·";
       wireHandCard(el, player.id, i, memorizing);
       grid.appendChild(el);
@@ -1602,8 +1867,16 @@ function renderOnline() {
     if (online.pending && myTurn) disablePlayButtons(true);
     showChoiceUi(online.pending, null, myTurn, online.pileTop ? label(online.pileTop) : "", null);
   }
-  var turnActive = !memorizing && myTurn && online.phase !== "keepBoth" && online.phase !== "peekReveal" && online.phase !== "reveal";
-  showTurnClock(online.turnEndsAt, turnActive, expireOnlineTurn);
+  var giving = !memorizing && online.dumpGive && online.dumpGive.offTurn && online.dumpGive.actor === you;
+  if (giving) {
+    turnTimerSuffix = "to give a card";
+    showTurnClock(online.dumpGive.endsAt, true, expireOnlineTurn);
+  } else {
+    turnTimerSuffix = "to move";
+    var turnActive = !memorizing && myTurn && online.phase !== "keepBoth" && online.phase !== "peekReveal" && online.phase !== "reveal";
+    showTurnClock(online.turnEndsAt, turnActive, expireOnlineTurn);
+  }
+  paintChipBar();
 }
 
 function doDraw() { if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
@@ -1658,12 +1931,18 @@ function returnToSetup() {
   setMemorizeBar(false);
   err("");
   if (window.history && window.history.replaceState) window.history.replaceState(null, "", window.location.pathname);
+  var chipBar = document.getElementById("chipBar");
+  if (chipBar) { chipBar.hidden = true; chipBar.textContent = ""; }
+  cardMemory = {};
+  turnTimerSuffix = "to move";
+  setChipStatus("");
+  loadChipLobby();
   if (setup && setup.scrollIntoView) setup.scrollIntoView();
 }
 function doQuit() {
   var code = roomCode, seat = mySeat, token = seatToken, wasOnline = mode === "online" && roomCode && mySeat !== null && seatToken;
   returnToSetup();
-  if (wasOnline) api("leave", { code: code, seat: seat, token: token }).catch(function() {});
+  if (wasOnline) api("leave", { code: code, seat: seat, token: token }).then(function() { loadChipLobby(); }).catch(function() { loadChipLobby(); });
 }
 function doClaim() { requestChoice("claim"); }
 function doArm(intent) {
@@ -2185,6 +2464,7 @@ function expireOnlineTurn() {
     if (!roomCode || mySeat === null) return null;
     return api("state", { code: roomCode, seat: mySeat, token: seatToken });
   }).then(function(res) {
+    noteWallet(res);
     if (res && res.state) handleState(res.state);
   }).catch(function() {});
 }
@@ -3120,6 +3400,17 @@ document.addEventListener("keydown", function(e) {
 });
 window.onerror = function(msg) { err(msg); };
 (function boot() {
+  ensurePlayerId();
+  loadChipLobby();
+  if (lobbyTimer) clearInterval(lobbyTimer);
+  lobbyTimer = setInterval(function() {
+    var setup = document.getElementById("setup");
+    if (!setup || setup.style.display === "none") return;
+    if (mode === "online" && roomCode) return;
+    loadChipLobby();
+  }, 4000);
+  if (claimTicker) clearInterval(claimTicker);
+  claimTicker = setInterval(paintClaim, 1000);
   var join = new URLSearchParams(location.search).get("join");
   if (join) {
     document.getElementById("joinCode").value = join.toUpperCase();

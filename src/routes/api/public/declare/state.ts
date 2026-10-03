@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { applyTimers, publicState } from "@/lib/declare-engine";
-import { loadRoom, saveRoom, seatAuthorized, writeViews } from "@/lib/declare-store.server";
+import { publicState } from "@/lib/declare-engine";
+import { advanceAndSave, loadWallet, seatAuthorized } from "@/lib/declare-store.server";
+import { walletView } from "@/lib/declare-table.server";
 
 const Body = z.object({
   code: z.string().trim().min(1).max(8),
@@ -19,22 +20,14 @@ export const Route = createFileRoute("/api/public/declare/state")({
         }
         const { code, seat, token } = parsed.data;
 
-        const room = await loadRoom(code.toUpperCase());
+        const room = await advanceAndSave(code.toUpperCase());
         if (!room) return Response.json({ error: "Room not found." }, { status: 404 });
         if (!seatAuthorized(room, seat, token)) {
           return Response.json({ error: "unauthorized" }, { status: 401 });
         }
-        if (applyTimers(room)) {
-          try {
-            await saveRoom(room);
-            await writeViews(room);
-          } catch {
-            // A concurrent writer won; reload and serve its state.
-            const fresh = await loadRoom(room.code);
-            if (fresh) return Response.json({ state: publicState(fresh, seat) });
-          }
-        }
-        return Response.json({ state: publicState(room, seat) });
+        const playerId = room.seats[seat]?.playerId;
+        const wallet = playerId ? await loadWallet(playerId) : null;
+        return Response.json({ state: publicState(room, seat), wallet: wallet ? walletView(wallet) : null });
       },
     },
   },

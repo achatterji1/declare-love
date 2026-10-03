@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicDeclareActionRouteImport } from './routes/api/public/declare/action'
+import { Route as ApiPublicDeclareChipsRouteImport } from './routes/api/public/declare/chips'
 import { Route as ApiPublicDeclareConfigRouteImport } from './routes/api/public/declare/config'
 import { Route as ApiPublicDeclareCreateRouteImport } from './routes/api/public/declare/create'
 import { Route as ApiPublicDeclareJoinRouteImport } from './routes/api/public/declare/join'
@@ -26,6 +27,11 @@ const IndexRoute = IndexRouteImport.update({
 const ApiPublicDeclareActionRoute = ApiPublicDeclareActionRouteImport.update({
   id: '/api/public/declare/action',
   path: '/api/public/declare/action',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicDeclareChipsRoute = ApiPublicDeclareChipsRouteImport.update({
+  id: '/api/public/declare/chips',
+  path: '/api/public/declare/chips',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicDeclareConfigRoute = ApiPublicDeclareConfigRouteImport.update({
@@ -62,6 +68,7 @@ const ApiPublicDeclareTickRoute = ApiPublicDeclareTickRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/public/declare/action': typeof ApiPublicDeclareActionRoute
+  '/api/public/declare/chips': typeof ApiPublicDeclareChipsRoute
   '/api/public/declare/config': typeof ApiPublicDeclareConfigRoute
   '/api/public/declare/create': typeof ApiPublicDeclareCreateRoute
   '/api/public/declare/join': typeof ApiPublicDeclareJoinRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/public/declare/action': typeof ApiPublicDeclareActionRoute
+  '/api/public/declare/chips': typeof ApiPublicDeclareChipsRoute
   '/api/public/declare/config': typeof ApiPublicDeclareConfigRoute
   '/api/public/declare/create': typeof ApiPublicDeclareCreateRoute
   '/api/public/declare/join': typeof ApiPublicDeclareJoinRoute
@@ -83,6 +91,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/public/declare/action': typeof ApiPublicDeclareActionRoute
+  '/api/public/declare/chips': typeof ApiPublicDeclareChipsRoute
   '/api/public/declare/config': typeof ApiPublicDeclareConfigRoute
   '/api/public/declare/create': typeof ApiPublicDeclareCreateRoute
   '/api/public/declare/join': typeof ApiPublicDeclareJoinRoute
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api/public/declare/action'
+    | '/api/public/declare/chips'
     | '/api/public/declare/config'
     | '/api/public/declare/create'
     | '/api/public/declare/join'
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api/public/declare/action'
+    | '/api/public/declare/chips'
     | '/api/public/declare/config'
     | '/api/public/declare/create'
     | '/api/public/declare/join'
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api/public/declare/action'
+    | '/api/public/declare/chips'
     | '/api/public/declare/config'
     | '/api/public/declare/create'
     | '/api/public/declare/join'
@@ -126,6 +138,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiPublicDeclareActionRoute: typeof ApiPublicDeclareActionRoute
+  ApiPublicDeclareChipsRoute: typeof ApiPublicDeclareChipsRoute
   ApiPublicDeclareConfigRoute: typeof ApiPublicDeclareConfigRoute
   ApiPublicDeclareCreateRoute: typeof ApiPublicDeclareCreateRoute
   ApiPublicDeclareJoinRoute: typeof ApiPublicDeclareJoinRoute
@@ -148,6 +161,13 @@ declare module '@tanstack/react-router' {
       path: '/api/public/declare/action'
       fullPath: '/api/public/declare/action'
       preLoaderRoute: typeof ApiPublicDeclareActionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/declare/chips': {
+      id: '/api/public/declare/chips'
+      path: '/api/public/declare/chips'
+      fullPath: '/api/public/declare/chips'
+      preLoaderRoute: typeof ApiPublicDeclareChipsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/declare/config': {
@@ -198,6 +218,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiPublicDeclareActionRoute: ApiPublicDeclareActionRoute,
+  ApiPublicDeclareChipsRoute: ApiPublicDeclareChipsRoute,
   ApiPublicDeclareConfigRoute: ApiPublicDeclareConfigRoute,
   ApiPublicDeclareCreateRoute: ApiPublicDeclareCreateRoute,
   ApiPublicDeclareJoinRoute: ApiPublicDeclareJoinRoute,

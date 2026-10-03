@@ -7,6 +7,10 @@ export const MEMORIZE_MS = 30000;
 export const ACT_MS = 30000;
 export const KEEP_BOTH_MS = 4000;
 export const PEEK_MS = 1300;
+export const GIVE_MS = 5000;
+export const VIP_ACT_MS = 15000;
+
+export type Tier = "bronze" | "silver" | "gold" | "vip";
 
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 const SUITS = ["H", "D", "C", "S"];
@@ -16,6 +20,10 @@ export interface Card {
   r: string;
   s: string;
   known: boolean[];
+  // Who has actually seen this card. Not sent to other players. Distinct from `known`,
+  // which only controls the current face-up flash.
+  seen?: boolean[];
+  id?: string;
 }
 
 export interface Player {
@@ -39,7 +47,20 @@ export interface Game {
   intent: string | null;
   pick: string[];
   free: boolean;
-  dumpGive: { actor: number; oppPid: number; emptiedI: number; rank: string } | null;
+  dumpGive: {
+    actor: number;
+    oppPid: number;
+    emptiedI: number;
+    rank: string;
+    offTurn?: boolean;
+    endsAt?: number | null;
+    resumePhase?: string;
+    resumeFree?: boolean;
+    resumeRemainingMs?: number | null;
+    resumeTurnWaitKey?: string | null;
+  } | null;
+  // While a computer holds the center, humans who have seen a match may discard it.
+  snipeEndsAt?: number | null;
   power: string | null;
   powerStep: string | null;
   powerTarget: { pid: number; i: number } | null;
@@ -74,6 +95,21 @@ export interface Game {
 export interface Seat {
   name: string;
   token: string;
+  playerId?: string;
+  computer?: boolean;
+}
+
+export interface Stake {
+  playerId: string;
+  seat: number;
+  amount: number;
+  forfeited?: boolean;
+}
+
+export interface Payout {
+  playerId: string;
+  amount: number;
+  key: string;
 }
 
 export interface Room {
@@ -86,6 +122,155 @@ export interface Room {
   version: number;
   keepBothEndsAt?: number | null;
   peekEndsAt?: number | null;
+  tier?: Tier | null;
+  pot?: number;
+  buyIn?: number;
+  actMs?: number | null;
+  stakes?: Stake[];
+  payouts?: Payout[] | null;
+}
+
+export function moveClockMs(room: { actMs?: number | null }): number {
+  return room.actMs === VIP_ACT_MS ? VIP_ACT_MS : ACT_MS;
+}
+
+function awardPot(room: Room, scores: number[]): number {
+  const pot = room.pot || 0;
+  if (!room.tier || pot <= 0) return 0;
+  const seated = scores.map((_, index) => index).filter((index) => room.seats[index]);
+  const pool = seated.length ? seated : scores.map((_, index) => index);
+  const low = Math.min(...pool.map((index) => scores[index]));
+  const winners = pool.filter((index) => scores[index] === low);
+  const humans = winners.filter((index) => {
+    const seat = room.seats[index];
+    return !!(seat && !seat.computer && seat.playerId);
+  });
+  const key = room.code + ":pot:" + room.version + ":" + scores.join(",");
+  if (humans.length === 1) {
+    room.payouts = [{ playerId: room.seats[humans[0]]!.playerId!, amount: pot, key }];
+  } else if (humans.length > 1) {
+    const share = Math.floor(pot / humans.length);
+    let remainder = pot - share * humans.length;
+    room.payouts = humans
+      .map((seat, index) => {
+        const amount = share + (index === 0 ? remainder : 0);
+        if (index === 0) remainder = 0;
+        return amount > 0 ? { playerId: room.seats[seat]!.playerId!, amount, key: key + ":" + seat } : null;
+      })
+      .filter((row): row is NonNullable<typeof row> => !!row);
+  } else {
+    const stakes = room.stakes || [];
+    const refunds = stakes
+      .filter((stake) => stake.amount > 0 && stake.playerId && !stake.forfeited)
+      .map((stake) => ({
+        playerId: stake.playerId,
+        amount: stake.amount,
+        key: room.code + ":return:" + room.version + ":" + stake.playerId + ":" + stake.seat,
+      }));
+    room.payouts = refunds.length ? refunds : null;
+  }
+  room.pot = 0;
+  room.stakes = [];
+  return pot;
+}
+
+// A chip table takes players only in the lobby. Once the hand starts, the
+// roster is closed: a quit seat stays empty, and nobody is dealt into that hand.
+export function joinChipSeat(
+  room: Room,
+  person: { name: string; token: string; playerId: string },
+): number {
+  if (!room.tier || room.status !== "lobby") throw new Error("That hand has already started.");
+  if (room.seats.some((seat) => seat && seat.playerId === person.playerId)) {
+    throw new Error("You are already seated.");
+  }
+  const idx = room.seats.findIndex((seat) => !seat);
+  if (idx < 0) throw new Error("That table is full.");
+  const buyIn = room.buyIn || 0;
+  room.seats[idx] = {
+    name: person.name,
+    token: person.token,
+    playerId: person.playerId,
+    computer: false,
+  };
+  room.pot = (room.pot || 0) + buyIn;
+  room.stakes = [...(room.stakes || []), { playerId: person.playerId, seat: idx, amount: buyIn }];
+  if (room.seats.every(Boolean)) startGame(room);
+  return idx;
+}
+
+// Lobby leave refunds that one buy-in. A chip seat that leaves after the hand
+// starts forfeits that buy-in and stays empty. The hand goes on with the
+// people still sitting.
+export function leaveSeat(room: Room, seat: number): void {
+  const sitting = room.seats[seat];
+  if (!sitting || sitting.computer) return;
+  if (room.status === "lobby") {
+    const stake = (room.stakes || []).find((row) => row.seat === seat && row.playerId === sitting.playerId);
+    room.seats[seat] = null;
+    if (stake) {
+      room.stakes = (room.stakes || []).filter((row) => row !== stake);
+      room.pot = Math.max(0, (room.pot || 0) - stake.amount);
+      room.payouts = [
+        {
+          playerId: stake.playerId,
+          amount: stake.amount,
+          key: room.code + ":leave:" + seat + ":" + room.version + ":" + stake.amount,
+        },
+      ];
+    }
+    return;
+  }
+  if (room.tier) {
+    if (room.status !== "ended") {
+      for (const stake of room.stakes || []) {
+        if (stake.seat === seat && stake.playerId === sitting.playerId) stake.forfeited = true;
+      }
+    }
+    const G = room.G;
+    if (G?.dumpGive && G.dumpGive.actor === seat) {
+      const giveI = G.players[seat].slots.findIndex((card) => !!card);
+      if (giveI >= 0) completeDumpGive(room, giveI);
+    }
+    room.seats[seat] = null;
+    if (G && G.players[seat]) G.players[seat].name = "Open";
+    if (G?.memorizeReady) {
+      for (let i = 0; i < G.n; i++) if (!room.seats[i]) G.memorizeReady[i] = true;
+      if (G.phase === "memorize" && G.memorizeReady.every(Boolean)) endMemorize(room);
+    }
+    if (G && G.phase !== "reveal" && G.phase !== "memorize" && !room.seats[G.turn]) nextTurn(room);
+    return;
+  }
+  room.status = "abandoned";
+}
+
+function cardId(): string {
+  return "c" + Math.random().toString(36).slice(2, 10);
+}
+
+function makeCard(r: string, s: string, n: number): Card {
+  return { r, s, known: Array(n).fill(false), seen: Array(n).fill(false), id: cardId() };
+}
+
+function conceal(card: Card): void {
+  const n = card.known.length;
+  card.known = Array(n).fill(false);
+  card.seen = Array(n).fill(false);
+  card.id = cardId();
+}
+
+function markSeen(card: Card, pid: number): void {
+  const n = card.known.length;
+  if (!card.seen || card.seen.length !== n) card.seen = Array(n).fill(false);
+  if (pid >= 0 && pid < n) card.seen[pid] = true;
+}
+
+function markSeenAll(card: Card): void {
+  card.seen = Array(card.known.length).fill(true);
+}
+
+export function hasSeen(card: Card, pid: number): boolean {
+  return !!card.known[pid] || !!(card.seen && card.seen[pid]);
 }
 
 export function makeCode(): string {
@@ -268,8 +453,10 @@ export function makeDeal(n: number, cardsN: number): Game {
     const slots: Card[] = [];
     for (let k = 0; k < cardsN; k++) {
       const c = deck.pop()!;
-      const known = Array(n).fill(false);
-      slots.push({ r: c.r, s: c.s, known });
+      const dealt = makeCard(c.r, c.s, n);
+      // The owner sees the bottom two during memorize. That sight is recorded even after they flip down.
+      if (k >= cols && k < cols + 2) markSeen(dealt, id);
+      slots.push(dealt);
     }
     // Bottom two stay unknown; memorize phase reveals them temporarily
     players.push({ id, slots, declared: false, name: "P" + (id + 1) });
@@ -331,9 +518,18 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
       version: room.version,
       n: room.n,
       cardsN: room.cardsN,
-      players: room.seats.map((s, i) => ({ id: i, name: s ? s.name : null, ready: !!s })),
+      players: room.seats.map((s, i) => ({
+        id: i,
+        name: s ? (s.computer ? "Computer" : s.name) : null,
+        computer: !!(s && s.computer),
+        ready: !!s,
+      })),
       you: viewerId,
       waiting: true,
+      tier: room.tier ?? null,
+      pot: room.pot ?? 0,
+      buyIn: room.buyIn ?? 0,
+      actMs: moveClockMs(room),
     };
   }
   const top = pileTop(G);
@@ -352,7 +548,21 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     power: G.power || null,
     powerStep: G.powerStep || null,
     chainRank: G.chainRank || null,
-    dumpGive: G.dumpGive || null,
+    tier: room.tier ?? null,
+    pot: room.pot ?? 0,
+    buyIn: room.buyIn ?? 0,
+    actMs: moveClockMs(room),
+    snipeEndsAt: G.snipeEndsAt ?? null,
+    dumpGive: G.dumpGive
+      ? {
+          actor: G.dumpGive.actor,
+          oppPid: G.dumpGive.oppPid,
+          emptiedI: G.dumpGive.emptiedI,
+          rank: G.dumpGive.rank,
+          offTurn: !!G.dumpGive.offTurn,
+          endsAt: G.dumpGive.endsAt ?? null,
+        }
+      : null,
     powerMine: G.powerMine || null,
     powerTarget: G.powerTarget || null,
     keepBoth:
@@ -377,7 +587,9 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     pileUnder: G.pile.length > 1 ? { r: G.pile[G.pile.length - 2].r, s: G.pile[G.pile.length - 2].s } : null,
     players: G.players.map((p) => ({
       id: p.id,
-      name: p.name,
+      name: room.seats[p.id] ? (room.seats[p.id]?.computer ? "Computer" : p.name) : "Open",
+      computer: !!room.seats[p.id]?.computer,
+      vacant: !room.seats[p.id],
       declared: p.declared,
       memorizeReady: G.phase === "memorize" ? !!(G.memorizeReady && G.memorizeReady[p.id]) : null,
       score: G.phase === "reveal" ? score(p) : null,
@@ -389,7 +601,9 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
         const keepFlash =
           G.phase === "keepBoth" && !!kb && kb.pid === p.id && (i === kb.handI || i === kb.placedI);
         const known = G.phase === "reveal" || c.known[viewerId] || memorizeReveal || keepFlash;
-        return known ? { r: c.r, s: c.s, known: true } : { known: false };
+        // `seen` stays on the server. A hidden card is still only { known: false } plus an id
+        // the viewer's own browser can match to a card it was already shown.
+        return known ? { r: c.r, s: c.s, known: true, id: c.id || null } : { known: false, id: c.id || null };
       }),
     })),
   };
@@ -404,6 +618,7 @@ export function endMemorize(room: Room): void {
   G.memorizeReady = null;
   G.memorizeEndsAt = null;
   G.log = "Cards are face-down — remember them. Draw, Pick a passed/discarded center card, or Discard a match.";
+  skipEmptyTurn(room);
 }
 
 function startPeekReveal(room: Room, peeker: number, targetPid: number, i: number, next: string, prefix?: string): void {
@@ -411,6 +626,7 @@ function startPeekReveal(room: Room, peeker: number, targetPid: number, i: numbe
   const card = G.players[targetPid].slots[i];
   if (!card) return;
   const priorKnown = !!card.known[peeker];
+  markSeen(card, peeker);
   card.known[peeker] = true;
   G.phase = "peekReveal";
   G.peekReveal = { peeker, targetPid, i, next, priorKnown };
@@ -532,6 +748,7 @@ function turnWaitKey(G: Game): string {
 function syncTurnClock(room: Room, now = Date.now()): void {
   const G = room.G;
   if (!G) return;
+  skipEmptyTurn(room);
   if (room.status !== "playing") {
     G.turnEndsAt = null;
     G.turnWaitKey = null;
@@ -543,6 +760,12 @@ function syncTurnClock(room: Room, now = Date.now()): void {
     if (G.turnWaitKey == null) G.turnWaitKey = turnWaitKey(G);
   }
   if (deciding && G.turnEndsAt != null) G.actEndsAt = null;
+  if (G.phase === "dumpGive" && G.dumpGive?.offTurn) {
+    // The 5-second give is its own deadline. It must not start a fresh move clock.
+    G.turnEndsAt = null;
+    G.turnWaitKey = "off-give";
+    return;
+  }
   if (G.pending) return;
   if (!turnWaiting(G)) {
     G.turnEndsAt = null;
@@ -555,7 +778,7 @@ function syncTurnClock(room: Room, now = Date.now()): void {
     return;
   }
   G.turnWaitKey = key;
-  G.turnEndsAt = now + ACT_MS;
+  G.turnEndsAt = now + moveClockMs(room);
 }
 
 function clearMoveState(G: Game): void {
@@ -573,16 +796,51 @@ function clearMoveState(G: Game): void {
   G.powerMine = null;
 }
 
+// An empty chip seat is not a player. Step off it before a clock starts.
+function advanceToOccupiedSeat(room: Room): void {
+  const G = room.G;
+  if (!G || !room.tier || room.seats[G.turn] || !room.seats.some(Boolean)) return;
+  for (let step = 0; step < G.n; step++) {
+    G.turn = (G.turn + 1) % G.n;
+    if (room.seats[G.turn]) return;
+  }
+}
+
+function skipEmptyTurn(room: Room): void {
+  const G = room.G;
+  if (!G || !room.tier || room.seats[G.turn] || !room.seats.some(Boolean)) return;
+  if (G.phase === "memorize") {
+    advanceToOccupiedSeat(room);
+    return;
+  }
+  if (G.phase === "reveal") return;
+  if (G.declarer !== null) {
+    nextTurn(room);
+    return;
+  }
+  advanceToOccupiedSeat(room);
+  clearMoveState(G);
+  G.free = false;
+  G.phase = "draw";
+  G.turnEndsAt = null;
+  G.turnWaitKey = null;
+}
+
 // Take the center card into the current player's hand. The keep-both flash ends the turn.
 function keepCenterCard(room: Room, now = Date.now()): void {
   const G = room.G!;
+  if (room.tier && !room.seats[G.turn]) {
+    skipEmptyTurn(room);
+    return;
+  }
   const drawn = pileTop(G);
   if (!drawn) return;
   const pid = G.turn;
   clearMoveState(G);
   G.free = false;
-  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  const extra = makeCard(drawn.r, drawn.s, G.n);
   extra.known[pid] = true;
+  markSeenAll(extra);
   const placedI = placeDrawnInHand(G, pid, extra);
   G.pile.pop();
   G.phase = "keepBoth";
@@ -594,6 +852,12 @@ function keepCenterCard(room: Room, now = Date.now()): void {
 // The move clock ran out. A center card is taken and the turn ends. With no center card, the turn still advances.
 function autoPass(room: Room, now = Date.now()): void {
   const G = room.G!;
+  if (room.tier && !room.seats[G.turn]) {
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
+    skipEmptyTurn(room);
+    return;
+  }
   G.turnEndsAt = null;
   G.turnWaitKey = null;
   G.pending = null;
@@ -628,6 +892,14 @@ export function applyTimers(room: Room, now = Date.now()): boolean {
       endPeekReveal(room);
       changed = true;
     }
+  } else if (
+    G.phase === "dumpGive" &&
+    G.dumpGive?.offTurn &&
+    G.dumpGive.endsAt != null &&
+    now >= G.dumpGive.endsAt
+  ) {
+    autoGiveOffTurn(room, now);
+    changed = true;
   } else if (
     (G.pending || turnWaiting(G)) &&
     ((G.turnEndsAt != null && now >= G.turnEndsAt) ||
@@ -666,10 +938,12 @@ function wrongDiscardKeepBoth(room: Room, pid: number, slotI: number): void {
   G.chainRank = null;
   G.dumpGive = null;
   const priorHandKnown = !!card.known[pid];
-  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  const extra = makeCard(drawn.r, drawn.s, G.n);
   // Actor remembers the attempt; every viewer sees both faces via keepBoth, then they flip down.
   card.known[pid] = true;
   extra.known[pid] = true;
+  markSeenAll(card);
+  markSeenAll(extra);
   const placedI = placeDrawnInHand(G, pid, extra);
   G.pile.pop();
   G.phase = "keepBoth";
@@ -692,10 +966,12 @@ function wrongOppDumpKeepBoth(room: Room, actor: number, oppPid: number, slotI: 
   G.dumpGive = null;
   // Opponent loses the mis-clicked card; actor keeps it AND the center/drawn card
   G.players[oppPid].slots[slotI] = null;
-  const taken: Card = { r: card.r, s: card.s, known: Array(G.n).fill(false) };
-  const kept: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  const taken = makeCard(card.r, card.s, G.n);
+  const kept = makeCard(drawn.r, drawn.s, G.n);
   taken.known[actor] = true;
   kept.known[actor] = true;
+  markSeenAll(taken);
+  markSeenAll(kept);
   const handI = placeDrawnInHand(G, actor, taken);
   const placedI = placeDrawnInHand(G, actor, kept);
   G.pile.pop();
@@ -709,7 +985,7 @@ function swapIntoHand(G: Game, pid: number, i: number): Card {
   const card = G.players[pid].slots[i]!;
   const drawn = pileTop(G)!;
   // Swapped-in center cards stay face-down in hand (unknown to everyone including owner)
-  const taken: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  const taken = makeCard(drawn.r, drawn.s, G.n);
   G.players[pid].slots[i] = taken;
   G.pile[G.pile.length - 1] = card;
   G.free = false;
@@ -781,7 +1057,21 @@ function startDumpGive(room: Room, actor: number, oppPid: number, emptiedI: numb
   G.log = "Give them a card — tap one of yours to hand over to " + G.players[oppPid].name + ".";
 }
 
-function completeDumpGive(room: Room, giveI: number): void {
+function restoreOffTurn(room: Room, dg: NonNullable<Game["dumpGive"]>, now: number): void {
+  const G = room.G!;
+  G.phase = dg.resumePhase || "act";
+  G.free = !!dg.resumeFree;
+  G.intent = null;
+  G.pick = [];
+  G.pending = null;
+  G.actEndsAt = null;
+  G.dumpGive = null;
+  if (dg.resumeTurnWaitKey) G.turnWaitKey = dg.resumeTurnWaitKey;
+  if (dg.resumeRemainingMs != null) G.turnEndsAt = now + Math.max(0, dg.resumeRemainingMs);
+  if (G.phase === "act" || (G.phase === "draw" && G.free && G.declarer === null)) refreshActDumpPicks(G);
+}
+
+function completeDumpGive(room: Room, giveI: number, now = Date.now()): void {
   const G = room.G!;
   const dg = G.dumpGive;
   if (!dg) return;
@@ -790,13 +1080,96 @@ function completeDumpGive(room: Room, giveI: number): void {
   if (!card) return;
   G.players[actor].slots[giveI] = null;
   // A dumped/given card is face-down for everyone in its destination slot.
-  card.known = Array(G.n).fill(false);
+  conceal(card);
   placeCardInHandPrefer(G, dg.oppPid, card, dg.emptiedI);
   const rank = dg.rank;
   const oppName = G.players[dg.oppPid].name;
   G.dumpGive = null;
+  if (dg.offTurn) {
+    G.log = "Gave a card to " + oppName + ".";
+    restoreOffTurn(room, dg, now);
+    return;
+  }
   G.log = "Gave a card to " + oppName + ". One match action done — turn ends.";
   return beginChain(room, actor, rank);
+}
+
+function autoGiveOffTurn(room: Room, now: number): void {
+  const G = room.G!;
+  const dg = G.dumpGive;
+  if (!dg) return;
+  const giveI = G.players[dg.actor].slots.findIndex((c) => !!c);
+  if (giveI < 0) {
+    G.log = "No card left to give.";
+    restoreOffTurn(room, dg, now);
+    return;
+  }
+  completeDumpGive(room, giveI, now);
+}
+
+function offTurnWindow(G: Game): boolean {
+  if (G.n !== 4 || G.pending) return false;
+  if (G.phase === "act") return !!pileTop(G);
+  if (G.phase === "draw" && G.free) return !!pileTop(G);
+  return false;
+}
+
+export function humanCanOffTurnDump(room: Room): boolean {
+  const G = room.G;
+  if (!G || !offTurnWindow(G)) return false;
+  const top = pileTop(G);
+  if (!top) return false;
+  for (let actor = 0; actor < G.n; actor++) {
+    if (actor === G.turn || room.seats[actor]?.computer) continue;
+    if (!G.players[actor].slots.some((c) => !!c)) continue;
+    for (let p = 0; p < G.n; p++) {
+      if (p === actor || handLocked(G, p)) continue;
+      if (G.players[p].slots.some((c) => c && c.r === top.r && hasSeen(c, actor))) return true;
+    }
+  }
+  return false;
+}
+
+// A player who is not the turn player may discard one opponent card they have
+// already seen, when it matches the center. Unseen cards are refused with no
+// state change, so the response cannot reveal them.
+function offTurnKnownDump(room: Room, actor: number, oppPid: number, i: number, now = Date.now()): boolean {
+  const G = room.G!;
+  if (!offTurnWindow(G) || actor === G.turn) return false;
+  if (!Number.isInteger(oppPid) || oppPid < 0 || oppPid >= G.n || oppPid === actor) return false;
+  if (handLocked(G, oppPid)) return false;
+  const card = G.players[oppPid] && G.players[oppPid].slots[i];
+  if (!card || !hasSeen(card, actor)) return false;
+  const top = pileTop(G);
+  if (!top || card.r !== top.r) return false;
+  if (!G.players[actor].slots.some((c) => !!c)) return false;
+  const remaining = G.turnEndsAt != null ? Math.max(0, G.turnEndsAt - now) : null;
+  const resumeTurnWaitKey = G.turnWaitKey ?? null;
+  G.players[oppPid].slots[i] = null;
+  G.pile.push(card);
+  G.pick = [];
+  G.players[actor].slots.forEach((c, slot) => {
+    if (c) G.pick.push(actor + ":" + slot);
+  });
+  G.dumpGive = {
+    actor,
+    oppPid,
+    emptiedI: i,
+    rank: top.r,
+    offTurn: true,
+    endsAt: now + GIVE_MS,
+    resumePhase: G.phase,
+    resumeFree: G.free,
+    resumeRemainingMs: remaining,
+    resumeTurnWaitKey: resumeTurnWaitKey ?? undefined,
+  };
+  G.phase = "dumpGive";
+  G.intent = null;
+  G.pending = null;
+  G.actEndsAt = null;
+  G.snipeEndsAt = null;
+  G.log = "Discarded a seen matching card from " + G.players[oppPid].name + ". Give them one of yours.";
+  return true;
 }
 
 function tryDumpOpponent(room: Room, actor: number, oppPid: number, i: number): boolean {
@@ -833,8 +1206,10 @@ export function startGame(room: Room): void {
   room.G = makeDeal(room.n, room.cardsN);
   for (let i = 0; i < room.n; i++) {
     if (room.seats[i]) room.G.players[i].name = room.seats[i]!.name;
+    else if (room.tier) room.G.players[i].name = "Open";
   }
   room.status = "playing";
+  skipEmptyTurn(room);
 }
 
 export function finish(room: Room): void {
@@ -853,8 +1228,13 @@ export function finish(room: Room): void {
 export function nextTurn(room: Room): void {
   const G = room.G!;
   clearDecisionTimer(G);
+  if (room.tier && G.declarer !== null) G.queue = G.queue.filter((id) => !!room.seats[id]);
   if (G.declarer !== null && !G.queue.length) return reveal(room);
-  G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
+  for (let step = 0; step < G.n; step++) {
+    G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
+    if (!room.tier || room.seats[G.turn]) break;
+  }
+  if (room.tier && !room.seats.some(Boolean)) return reveal(room);
   G.phase = "draw";
   refreshActDumpPicks(G);
 }
@@ -863,9 +1243,17 @@ export function reveal(room: Room): void {
   const G = room.G!;
   G.phase = "reveal";
   const scores = G.players.map(score);
-  const low = Math.min(...scores);
+  const pool = room.tier
+    ? scores.map((_, index) => index).filter((index) => room.seats[index])
+    : scores.map((_, index) => index);
+  const considered = pool.length ? pool : scores.map((_, index) => index);
+  const low = Math.min(...considered.map((index) => scores[index]));
   let text = scores.map((s, i) => G.players[i].name + " " + s).join(", ") + ". ";
-  const winners = G.players.filter((_, i) => scores[i] === low).map((p) => p.name);
+  const winners = considered.filter((index) => scores[index] === low).map((index) => G.players[index].name);
+  if (room.tier && room.pot) {
+    const pot = awardPot(room, scores);
+    text += "Pot " + pot + ". ";
+  }
   text += winners.length > 1 ? "Tie." : winners[0] + " wins.";
   G.log = text;
   room.status = "ended";
@@ -941,8 +1329,8 @@ function dragQueen(room: Room, pid: number, myI: number, oppPid: number, oppI: n
   if (!mine || !theirs) return false;
   G.players[pid].slots[myI] = theirs;
   G.players[oppPid].slots[oppI] = mine;
-  G.players[pid].slots[myI]!.known = Array(G.n).fill(false);
-  G.players[oppPid].slots[oppI]!.known = Array(G.n).fill(false);
+  conceal(G.players[pid].slots[myI]!);
+  conceal(G.players[oppPid].slots[oppI]!);
   G.log = "Blind-traded with " + G.players[oppPid].name + ".";
   G.free = false;
   G.power = null;
@@ -974,8 +1362,8 @@ function applyKingTrade(room: Room, pid: number): boolean {
   }
   G.players[mine.pid].slots[mine.i] = oppCard;
   G.players[opp.pid].slots[opp.i] = myCard;
-  G.players[mine.pid].slots[mine.i]!.known = Array(G.n).fill(false);
-  G.players[opp.pid].slots[opp.i]!.known = Array(G.n).fill(false);
+  conceal(G.players[mine.pid].slots[mine.i]!);
+  conceal(G.players[opp.pid].slots[opp.i]!);
   G.log = G.players[pid].name + " traded after King peeks. K stays pickable for next.";
   G.free = true;
   G.power = null;
@@ -1004,9 +1392,24 @@ function handleDrag(room: Room, pid: number, msg: { action: string; [k: string]:
   const G = room.G;
   if (!G || room.status !== "playing") return false;
   if (G.phase === "reveal" || G.phase === "memorize" || G.phase === "keepBoth" || G.phase === "peekReveal") return false;
-  if (pid !== G.turn) return false;
 
   const gesture = msg.gesture as string;
+  if (gesture === "offDump") {
+    const opp = msg.p != null ? Number(msg.p) : -1;
+    const slot = Number(msg.i);
+    if (!Number.isInteger(slot) || slot < 0) return false;
+    return offTurnKnownDump(room, pid, opp, slot);
+  }
+  if (pid !== G.turn) {
+    if (gesture === "give" && G.phase === "dumpGive" && G.dumpGive?.offTurn && G.dumpGive.actor === pid) {
+      const slot = Number(msg.i);
+      if (msg.p != null && Number(msg.p) !== pid) return false;
+      if (!Number.isInteger(slot) || G.pick.indexOf(pid + ":" + slot) < 0) return false;
+      completeDumpGive(room, slot);
+      return true;
+    }
+    return false;
+  }
   const i = Number(msg.i);
   const p = msg.p != null ? Number(msg.p) : pid;
   const ti = msg.ti != null ? Number(msg.ti) : null;
@@ -1077,6 +1480,10 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
   const act = msg.action;
 
   if (act === "quit") {
+    if (room.tier) {
+      leaveSeat(room, pid);
+      return;
+    }
     room.status = "abandoned";
     return;
   }
@@ -1084,7 +1491,8 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
   // A finished round is phase "reveal" and status "ended". Those used to
   // return before this action was read, so New Deal never dealt again.
   if (act === "redeal") {
-    if (room.seats.filter(Boolean).length < room.n) return;
+    const seatedCount = room.seats.filter(Boolean).length;
+    if (room.tier ? seatedCount < 1 : seatedCount < room.n) return;
     const roundOver = !!G && (G.phase === "reveal" || room.status === "ended");
     if (!roundOver) return;
     startGame(room);
@@ -1095,7 +1503,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
   if (G.phase === "reveal") return;
   if (G.phase === "keepBoth" || G.phase === "peekReveal") return;
 
-  if (G.phase === "dumpGive" && act !== "card" && act !== "drag") return;
+  if (G.phase === "dumpGive" && act !== "card" && act !== "drag" && act !== "offDiscard") return;
 
   if (G.phase === "memorize") {
     if (act === "ready") {
@@ -1109,14 +1517,25 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     return;
   }
 
+  const giving = !!(G.phase === "dumpGive" && G.dumpGive && G.dumpGive.actor === pid);
+  const offDump = act === "offDiscard" || (act === "drag" && msg.gesture === "offDump");
   if (
     pid !== G.turn &&
+    !giving &&
+    !offDump &&
     !(
       (G.phase === "pick" || G.phase === "power" || G.phase === "chain") &&
       G.pick.some((x) => x.startsWith(pid + ":"))
     )
   )
     return;
+
+  if (act === "offDiscard") {
+    const opp = msg.p != null ? Number(msg.p) : -1;
+    const slot = Number(msg.i);
+    if (!Number.isInteger(slot) || slot < 0) return false;
+    return offTurnKnownDump(room, pid, opp, slot);
+  }
 
   if (G.pending && pid === G.turn && act !== "confirm" && act !== "cancel" && act !== "pending") return;
 
@@ -1133,12 +1552,15 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     G.pending = null;
     G.actEndsAt = null;
     addDumpPicks(G, pid);
+    const secs = Math.round(moveClockMs(room) / 1000);
     G.log =
       "Drew " +
       label(card) +
       ". " +
       (isPowerRank(card.r) ? powerHint(card.r) + " " : "") +
-      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you keep the center card.";
+      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). " +
+      secs +
+      " seconds to move — if time runs out you keep the center card.";
     return;
   }
 
@@ -1257,7 +1679,8 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     const targetPid = msg.p != null ? (msg.p as number) : pid;
     const key = targetPid + ":" + i;
     if (G.phase === "dumpGive") {
-      if (pid !== G.turn || !G.dumpGive || G.dumpGive.actor !== pid) return;
+      if (!G.dumpGive || G.dumpGive.actor !== pid) return;
+      if (!G.dumpGive.offTurn && pid !== G.turn) return;
       if (G.pick.indexOf(pid + ":" + i) < 0) return;
       return completeDumpGive(room, i);
     }
@@ -1325,8 +1748,8 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
         const theirs = G.players[targetPid].slots[i]!;
         G.players[a.pid].slots[a.i] = theirs;
         G.players[targetPid].slots[i] = mine;
-        G.players[a.pid].slots[a.i]!.known = Array(G.n).fill(false);
-        G.players[targetPid].slots[i]!.known = Array(G.n).fill(false);
+        conceal(G.players[a.pid].slots[a.i]!);
+        conceal(G.players[targetPid].slots[i]!);
         G.log = "Blind-traded with " + G.players[targetPid].name + ".";
         G.free = false;
         G.power = null;
@@ -1443,7 +1866,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     G.players[pid].declared = true;
     G.declarer = pid;
     G.queue = [];
-    for (let i = 0; i < G.n; i++) if (i !== pid) G.queue.push(i);
+    for (let i = 0; i < G.n; i++) if (i !== pid && (!room.tier || room.seats[i])) G.queue.push(i);
     G.log =
       G.players[pid].name +
       " declared. Their hand is locked — no dumps, peeks, or trades against it. Final turns: draw/discard/pick on your own hand & center only.";

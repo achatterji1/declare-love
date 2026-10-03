@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { leaveSeat } from "@/lib/declare-engine";
 import { mutateRoom, seatAuthorized } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -18,12 +19,7 @@ export const Route = createFileRoute("/api/public/declare/leave")({
         try {
           await mutateRoom(code.toUpperCase(), (r) => {
             if (!seatAuthorized(r, seat, token)) return;
-            if (r.status === "lobby") {
-              r.seats[seat] = null;
-            } else {
-              // Quit (and a mid-game disconnect) sends every client back to setup.
-              r.status = "abandoned";
-            }
+            leaveSeat(r, seat);
           });
         } catch {
           // Best-effort leave (also used via sendBeacon); never error loudly.
