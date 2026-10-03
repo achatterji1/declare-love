@@ -50,9 +50,9 @@ export interface Game {
   chainSkipFree: boolean | null;
   // Pick / Pass / Swap waiting for Yes. Null once confirmed or cancelled.
   pending: string | null;
-  // Deadline for confirming Pass / Pick / Swap. Timeout keeps the drawn card.
+  // Older confirm deadline. Absorbed into the move clock so cancelling cannot stall.
   actEndsAt: number | null;
-  // Deadline for the current move. Timeout passes. Separate from the confirm clock.
+  // Deadline for the current move, including Yes/No. Timeout keeps a center card.
   turnEndsAt?: number | null;
   turnWaitKey?: string | null;
   memorizeReady: boolean[] | null;
@@ -244,51 +244,11 @@ function clearDecisionTimer(G: Game): void {
   G.pending = null;
 }
 
-function decisionTimerOpen(G: Game): boolean {
-  if (G.actEndsAt == null) return false;
-  if (G.phase === "act" || G.phase === "draw") return true;
-  if (G.phase === "pick" && (G.intent === "swap" || G.intent === "claim" || G.intent === "discard")) return true;
-  return false;
-}
-
 function choiceVerb(choice: string): string {
   if (choice === "pass") return "Pass";
   if (choice === "swap") return "Swap in";
   if (choice === "claim") return "Pick";
   return "Choose";
-}
-
-// Timeout: take the center/drawn card into hand. Not a Pass.
-function forceKeepDrawn(room: Room, now = Date.now()): void {
-  const G = room.G!;
-  const drawn = pileTop(G);
-  const pid = G.turn;
-  clearDecisionTimer(G);
-  G.intent = null;
-  G.pick = [];
-  G.chainPid = null;
-  G.chainRank = null;
-  G.chainSkipFree = null;
-  G.dumpGive = null;
-  G.power = null;
-  G.powerStep = null;
-  G.powerTarget = null;
-  G.powerMine = null;
-  if (!drawn) {
-    G.free = false;
-    G.log = "Time's up.";
-    finish(room);
-    return;
-  }
-  G.free = false;
-  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
-  extra.known[pid] = true;
-  const placedI = placeDrawnInHand(G, pid, extra);
-  G.pile.pop();
-  G.phase = "keepBoth";
-  G.keepBoth = { pid, handI: placedI, placedI, priorHandKnown: false };
-  G.log = "Time's up. You keep " + label(drawn) + " — remember where it is.";
-  writeKeepBothDeadline(room, now + KEEP_BOTH_MS);
 }
 
 function score(p: Player): number {
@@ -401,7 +361,7 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
         : null,
     pending: G.pending || null,
     actEndsAt: G.actEndsAt || null,
-    turnEndsAt: !G.pending && G.turnEndsAt ? G.turnEndsAt : null,
+    turnEndsAt: G.turnEndsAt || null,
     phaseEndsAt:
       G.phase === "keepBoth"
         ? G.keepBothEndsAt ?? room.keepBothEndsAt ?? null
@@ -568,11 +528,23 @@ function turnWaitKey(G: Game): string {
 }
 
 // Start a fresh 30s move clock when the decision in front of the player changes.
-// A running clock for the same decision is left alone. Confirming a choice pauses it.
+// Yes/No is the same decision: the deadline keeps running, and cancelling does not refresh it.
 function syncTurnClock(room: Room, now = Date.now()): void {
   const G = room.G;
   if (!G) return;
-  if (room.status !== "playing" || !turnWaiting(G)) {
+  if (room.status !== "playing") {
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
+    return;
+  }
+  const deciding = !!G.pending || turnWaiting(G);
+  if (deciding && G.turnEndsAt == null && G.actEndsAt != null) {
+    G.turnEndsAt = G.actEndsAt;
+    if (G.turnWaitKey == null) G.turnWaitKey = turnWaitKey(G);
+  }
+  if (deciding && G.turnEndsAt != null) G.actEndsAt = null;
+  if (G.pending) return;
+  if (!turnWaiting(G)) {
     G.turnEndsAt = null;
     G.turnWaitKey = null;
     return;
@@ -586,72 +558,51 @@ function syncTurnClock(room: Room, now = Date.now()): void {
   G.turnEndsAt = now + ACT_MS;
 }
 
-// The move clock ran out. Pass the center card, or skip the turn if nothing was drawn.
-function autoPass(room: Room): void {
+function clearMoveState(G: Game): void {
+  G.intent = null;
+  G.pick = [];
+  G.pending = null;
+  G.actEndsAt = null;
+  G.chainPid = null;
+  G.chainRank = null;
+  G.chainSkipFree = null;
+  G.dumpGive = null;
+  G.power = null;
+  G.powerStep = null;
+  G.powerTarget = null;
+  G.powerMine = null;
+}
+
+// Take the center card into the current player's hand. The keep-both flash ends the turn.
+function keepCenterCard(room: Room, now = Date.now()): void {
+  const G = room.G!;
+  const drawn = pileTop(G);
+  if (!drawn) return;
+  const pid = G.turn;
+  clearMoveState(G);
+  G.free = false;
+  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  extra.known[pid] = true;
+  const placedI = placeDrawnInHand(G, pid, extra);
+  G.pile.pop();
+  G.phase = "keepBoth";
+  G.keepBoth = { pid, handI: placedI, placedI, priorHandKnown: false };
+  G.log = "Time's up. You keep " + label(drawn) + " — remember where it is.";
+  writeKeepBothDeadline(room, now + KEEP_BOTH_MS);
+}
+
+// The move clock ran out. A center card is taken and the turn ends. With no center card, the turn still advances.
+function autoPass(room: Room, now = Date.now()): void {
   const G = room.G!;
   G.turnEndsAt = null;
   G.turnWaitKey = null;
   G.pending = null;
   G.actEndsAt = null;
   const top = pileTop(G);
-
-  if (G.phase === "chain") {
-    const keepCenter = G.chainSkipFree === false;
-    G.pick = [];
-    G.chainPid = null;
-    G.chainRank = null;
-    G.chainSkipFree = null;
-    if (keepCenter) G.free = false;
-    else if (top) G.free = true;
-    G.log = "Time's up. Passed.";
-    return finish(room);
-  }
-
-  if (G.phase === "power" && G.powerStep === "k-trade") {
-    G.free = true;
-    G.log = "Time's up. Passed.";
-    G.power = null;
-    G.powerStep = null;
-    G.powerTarget = null;
-    G.powerMine = null;
-    G.pick = [];
-    return finish(room);
-  }
-
-  if (G.phase === "power") {
-    G.free = true;
-    G.log = "Time's up. Passed.";
-    G.power = null;
-    G.powerStep = null;
-    G.powerTarget = null;
-    G.powerMine = null;
-    G.pick = [];
-    return finish(room);
-  }
-
-  if (G.phase === "dumpGive" && G.dumpGive) {
-    const giveI = G.players[G.dumpGive.actor].slots.findIndex((c) => !!c);
-    G.log = "Time's up. Passed.";
-    if (giveI >= 0) return completeDumpGive(room, giveI);
-  }
-
-  if (G.phase === "act" && top) {
-    G.free = true;
-    G.intent = null;
-    G.pick = [];
-    G.log = "Time's up. Passed. " + label(top) + " stays in the center — next player can Pick it or Discard a match.";
-    return finish(room);
-  }
-
-  if (G.phase === "draw" && !G.deck.length && !top) return reveal(room);
-
-  G.intent = null;
-  G.pick = [];
-  G.power = null;
-  G.powerStep = null;
-  G.powerTarget = null;
-  G.powerMine = null;
-  if (top) G.free = true;
+  if (top) return keepCenterCard(room, now);
+  if (G.phase === "draw" && !G.deck.length) return reveal(room);
+  clearMoveState(G);
+  G.free = false;
   G.log = "Time's up. Passed.";
   return finish(room);
 }
@@ -677,25 +628,28 @@ export function applyTimers(room: Room, now = Date.now()): boolean {
       endPeekReveal(room);
       changed = true;
     }
-  } else if (G.pending && G.actEndsAt != null && now >= G.actEndsAt && decisionTimerOpen(G)) {
-    // Pass / Pick / Swap confirmation. Timing out still keeps the drawn card.
-    forceKeepDrawn(room, now);
+  } else if (
+    (G.pending || turnWaiting(G)) &&
+    ((G.turnEndsAt != null && now >= G.turnEndsAt) ||
+      (G.turnEndsAt == null && G.actEndsAt != null && now >= G.actEndsAt))
+  ) {
+    // Yes/No uses the same deadline. Timing out keeps a center card and ends the turn.
+    autoPass(room, now);
     changed = true;
-  } else if (!G.pending && G.turnEndsAt != null && now >= G.turnEndsAt && turnWaiting(G)) {
-    autoPass(room);
-    changed = true;
-  } else if (!G.pending && G.turnEndsAt == null && G.actEndsAt != null && now >= G.actEndsAt && turnWaiting(G)) {
-    // A move clock saved before turnEndsAt existed. Passing is the move-clock outcome.
-    autoPass(room);
-    changed = true;
-  } else if (G.actEndsAt != null && now >= G.actEndsAt && !G.pending) {
+  } else if (G.actEndsAt != null && now >= G.actEndsAt) {
     G.actEndsAt = null;
     changed = true;
   }
   const prevEnd = G.turnEndsAt ?? null;
   const prevKey = G.turnWaitKey ?? null;
+  const prevAct = G.actEndsAt ?? null;
   syncTurnClock(room, now);
-  if ((G.turnEndsAt ?? null) !== prevEnd || (G.turnWaitKey ?? null) !== prevKey) changed = true;
+  if (
+    (G.turnEndsAt ?? null) !== prevEnd ||
+    (G.turnWaitKey ?? null) !== prevKey ||
+    (G.actEndsAt ?? null) !== prevAct
+  )
+    changed = true;
   return changed;
 }
 
@@ -1102,7 +1056,19 @@ function handleDrag(room: Room, pid: number, msg: { action: string; [k: string]:
 
 export function handleAction(room: Room, pid: number, msg: { action: string; [k: string]: unknown }): boolean | void {
   const result = runHandleAction(room, pid, msg);
-  syncTurnClock(room);
+  const now = Date.now();
+  syncTurnClock(room, now);
+  const G = room.G;
+  if (
+    G &&
+    room.status === "playing" &&
+    G.turnEndsAt != null &&
+    now >= G.turnEndsAt &&
+    (G.pending || turnWaiting(G))
+  ) {
+    autoPass(room, now);
+    syncTurnClock(room, now);
+  }
   return result;
 }
 
@@ -1172,7 +1138,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
       label(card) +
       ". " +
       (isPowerRank(card.r) ? powerHint(card.r) + " " : "") +
-      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you pass.";
+      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you keep the center card.";
     return;
   }
 
@@ -1185,9 +1151,6 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     } else if (choice === "claim" && G.phase === "draw" && G.free && top) {
       G.pending = choice;
     } else return;
-    if (G.actEndsAt == null) G.actEndsAt = Date.now() + ACT_MS;
-    G.turnEndsAt = null;
-    G.turnWaitKey = null;
     G.log = choiceVerb(choice) + " " + label(top!) + "? Yes to confirm, No to choose again.";
     return;
   }
@@ -1224,7 +1187,6 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     }
     if (choice === "claim") {
       if (!(G.phase === "draw" && G.free && top)) return;
-      if (G.actEndsAt == null) G.actEndsAt = Date.now() + ACT_MS;
       G.intent = "claim";
       G.phase = "pick";
       G.pick = [];

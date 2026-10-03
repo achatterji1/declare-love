@@ -506,8 +506,8 @@
           </figure>
         </div>
         <div class="demo-confirm"><span>Pass 7♦?</span><span class="demo-yes">Yes</span><span class="demo-no">No</span></div>
-        <p style="text-align:center"><span class="timer-demo">0:30 to confirm</span></p>
-        <p class="caption">Nothing happens until Yes. No returns you to Pick, Pass, and Swap. If the 30 seconds run out, you keep the drawn card.</p>
+        <p style="text-align:center"><span class="timer-demo">0:30 to move</span></p>
+        <p class="caption">Nothing happens until Yes. No returns you to Pick, Pass, and Swap and the same 30 seconds keep running. If time runs out, you keep the center card and the turn ends.</p>
       </article>
       <article class="manual-page">
         <p class="manual-kicker">Step 3 · Discard and dump</p>
@@ -1600,11 +1600,9 @@ function renderOnline() {
     showChoiceUi(null, null, false, "", null);
   } else {
     if (online.pending && myTurn) disablePlayButtons(true);
-    showChoiceUi(online.pending, online.actEndsAt, myTurn, online.pileTop ? label(online.pileTop) : "", function() {
-      if (roomCode) api("tick", { code: roomCode }).catch(function() {});
-    });
+    showChoiceUi(online.pending, null, myTurn, online.pileTop ? label(online.pileTop) : "", null);
   }
-  var turnActive = !memorizing && myTurn && !online.pending && online.phase !== "keepBoth" && online.phase !== "peekReveal" && online.phase !== "reveal";
+  var turnActive = !memorizing && myTurn && online.phase !== "keepBoth" && online.phase !== "peekReveal" && online.phase !== "reveal";
   showTurnClock(online.turnEndsAt, turnActive, expireOnlineTurn);
 }
 
@@ -1979,7 +1977,7 @@ function render() {
   if (memorizing) {
     showChoiceUi(null, null, false, "", null);
     showTurnClock(null, false, null);
-  } else showChoiceUi(G.pending, G.actEndsAt, !cpu(), pileTop() ? label(pileTop()) : "", expireLocalAct);
+  } else showChoiceUi(G.pending, null, !cpu(), pileTop() ? label(pileTop()) : "", null);
   syncLocalTurnClock();
 }
 function cardEl(c, known, pick, flash) {
@@ -2010,7 +2008,7 @@ function drawCard() {
     G.pending = null;
     G.actEndsAt = null;
     addDumpPicks(G.turn);
-    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you pass.");
+    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you keep the center card.");
     render();
   } catch (e) { err(e.message); }
 }
@@ -2051,12 +2049,6 @@ function clearDecisionTimer() {
   G.actEndsAt = null;
   G.pending = null;
 }
-function decisionTimerOpen() {
-  if (!G || G.actEndsAt == null) return false;
-  if (G.phase === "act" || G.phase === "draw") return true;
-  if (G.phase === "pick" && (G.intent === "swap" || G.intent === "claim" || G.intent === "discard")) return true;
-  return false;
-}
 function choiceLegal(choice) {
   if (!G || cpu()) return false;
   if ((choice === "pass" || choice === "swap") && G.phase === "act" && pileTop()) return true;
@@ -2069,10 +2061,7 @@ function requestChoice(choice) {
     return;
   }
   if (!choiceLegal(choice)) return;
-  if (!G.actEndsAt) G.actEndsAt = Date.now() + ACT_MS;
   G.pending = choice;
-  G.turnEndsAt = null;
-  G.turnWaitKey = null;
   say(choiceVerb(choice) + " " + label(pileTop()) + "? Yes to confirm, No to choose again.");
   render();
 }
@@ -2091,11 +2080,6 @@ function cancelChoice() {
   say("Cancelled. Choose Pick, Pass, or Swap again.");
   render();
 }
-function expireLocalAct() {
-  if (!G || mode !== "local" || G.actEndsAt == null || Date.now() < G.actEndsAt) return;
-  if (!G.pending || !decisionTimerOpen()) { clearDecisionTimer(); render(); return; }
-  forceKeepDrawn();
-}
 function localTurnWaiting() {
   if (!G || G.pending) return false;
   return G.phase === "draw" || G.phase === "act" || G.phase === "pick" || G.phase === "chain" || G.phase === "power" || G.phase === "dumpGive";
@@ -2106,6 +2090,22 @@ function localTurnKey() {
 var syncingTurn = false;
 function syncLocalTurnClock() {
   if (!G || mode !== "local" || syncingTurn) return;
+  var deciding = G.pending || localTurnWaiting();
+  if (deciding && G.turnEndsAt == null && G.actEndsAt != null) {
+    G.turnEndsAt = G.actEndsAt;
+    if (!G.turnWaitKey) G.turnWaitKey = localTurnKey();
+  }
+  if (deciding && G.turnEndsAt != null) G.actEndsAt = null;
+  if (G.pending) {
+    if (G.turnEndsAt != null && Date.now() >= G.turnEndsAt) {
+      syncingTurn = true;
+      try { localAutoPass(); } finally { syncingTurn = false; }
+      syncLocalTurnClock();
+      return;
+    }
+    showTurnClock(G.turnEndsAt, G.turn === 0, expireLocalTurn);
+    return;
+  }
   if (!localTurnWaiting()) {
     G.turnEndsAt = null;
     G.turnWaitKey = null;
@@ -2120,62 +2120,20 @@ function syncLocalTurnClock() {
   if (Date.now() >= G.turnEndsAt) {
     syncingTurn = true;
     try { localAutoPass(); } finally { syncingTurn = false; }
+    syncLocalTurnClock();
     return;
   }
   showTurnClock(G.turnEndsAt, G.turn === 0, expireLocalTurn);
 }
 function expireLocalTurn() {
-  if (!G || mode !== "local" || G.pending || G.turnEndsAt == null || Date.now() < G.turnEndsAt) return;
+  if (!G || mode !== "local" || G.turnEndsAt == null || Date.now() < G.turnEndsAt) return;
   localAutoPass();
 }
-function localAutoPass() {
-  if (!G || G.pending || !localTurnWaiting()) return;
-  G.turnEndsAt = null;
-  G.turnWaitKey = null;
+function clearMoveState() {
+  G.intent = null;
+  G.pick = [];
+  G.pending = null;
   G.actEndsAt = null;
-  var top = pileTop();
-  if (G.phase === "chain") return passChain();
-  if (G.phase === "power" && G.powerStep === "k-trade") return skipKingTrade();
-  if (G.phase === "power") {
-    G.free = true;
-    G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
-    say("Time's up. Passed.");
-    return finish();
-  }
-  if (G.phase === "dumpGive" && G.dumpGive) {
-    var slots = G.players[G.dumpGive.actor].slots;
-    for (var i = 0; i < slots.length; i++) if (slots[i]) { say("Time's up. Passed."); return completeDumpGive(i); }
-  }
-  if (G.phase === "act" && top) {
-    G.free = true;
-    G.intent = null;
-    G.pick = [];
-    say("Time's up. Passed. " + label(top) + " stays in the center — next player can Pick it or Discard a match.");
-    return finish();
-  }
-  if (G.phase === "draw" && !G.deck.length && !top) return reveal();
-  G.intent = null;
-  G.pick = [];
-  G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null;
-  if (top) G.free = true;
-  say("Time's up. Passed.");
-  finish();
-}
-function expireOnlineTurn() {
-  if (mode !== "online" || !roomCode) return;
-  api("tick", { code: roomCode }).then(function() {
-    if (!roomCode || mySeat === null) return null;
-    return api("state", { code: roomCode, seat: mySeat, token: seatToken });
-  }).then(function(res) {
-    if (res && res.state) handleState(res.state);
-  }).catch(function() {});
-}
-function forceKeepDrawn() {
-  var drawn = pileTop();
-  var pid = G.turn;
-  clearDecisionTimer();
-  G.intent = null;
-  G.pick = [];
   G.chainPid = null;
   G.chainRank = null;
   G.chainSkipFree = null;
@@ -2184,17 +2142,17 @@ function forceKeepDrawn() {
   G.powerStep = null;
   G.powerTarget = null;
   G.powerMine = null;
-  if (!drawn) {
-    G.free = false;
-    say("Time's up.");
-    finish();
-    return;
-  }
+}
+function keepCenterCard() {
+  var drawn = pileTop();
+  if (!drawn) return;
+  var pid = G.turn;
+  clearMoveState();
   G.free = false;
-  var extra = {r:drawn.r, s:drawn.s, known:[]};
+  var extra = { r: drawn.r, s: drawn.s, known: [] };
   for (var k = 0; k < G.n; k++) extra.known.push(false);
   extra.known[pid] = true;
-  if (mode === "local" && G.n > 1) extra.known[1] = true;
+  if (G.n > 1) extra.known[1] = true;
   var placedI = placeDrawnInHand(pid, extra);
   G.pile.pop();
   G.phase = "keepBoth";
@@ -2206,6 +2164,29 @@ function forceKeepDrawn() {
     if (!G || G.phase !== "keepBoth") return;
     endKeepBothReveal();
   }, KEEP_BOTH_MS);
+}
+function localAutoPass() {
+  if (!G || (!G.pending && !localTurnWaiting())) return;
+  G.turnEndsAt = null;
+  G.turnWaitKey = null;
+  G.pending = null;
+  G.actEndsAt = null;
+  var top = pileTop();
+  if (top) return keepCenterCard();
+  if (G.phase === "draw" && !G.deck.length) return reveal();
+  clearMoveState();
+  G.free = false;
+  say("Time's up. Passed.");
+  finish();
+}
+function expireOnlineTurn() {
+  if (mode !== "online" || !roomCode) return;
+  api("tick", { code: roomCode }).then(function() {
+    if (!roomCode || mySeat === null) return null;
+    return api("state", { code: roomCode, seat: mySeat, token: seatToken });
+  }).then(function(res) {
+    if (res && res.state) handleState(res.state);
+  }).catch(function() {});
 }
 function placeDrawnInHand(pid, card) {
   var slots = G.players[pid].slots;
