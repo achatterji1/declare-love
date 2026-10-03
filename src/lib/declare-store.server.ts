@@ -4,6 +4,7 @@ import { advanceRoom } from "./declare-advance";
 import {
   createWallet,
   credit,
+  isMissingWalletTable,
   type Payout,
   type Stake,
   type Tier,
@@ -246,12 +247,94 @@ export function seatAuthorized(room: Room, seat: number, token: string): boolean
   return !!s.token && s.token === token;
 }
 
+const LEDGER_CODE = "0000";
+let walletTableMissing = false;
+
+function noteWalletTable(error: { message?: string } | null): boolean {
+  if (error && isMissingWalletTable(error.message || "")) {
+    walletTableMissing = true;
+    return true;
+  }
+  return false;
+}
+
+interface LedgerState {
+  v: 1;
+  wallets: WalletRow[];
+}
+
+async function readLedger(): Promise<{ version: number; wallets: WalletRow[] }> {
+  const { data, error } = await getSupabaseAdmin()
+    .from("declare_rooms")
+    .select("state, version")
+    .eq("code", LEDGER_CODE)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return { version: -1, wallets: [] };
+  const state = data.state as LedgerState | null;
+  const wallets = state && state.v === 1 && Array.isArray(state.wallets) ? state.wallets : [];
+  return { version: data.version, wallets };
+}
+
+async function writeLedger(version: number, wallets: WalletRow[]): Promise<void> {
+  const state: LedgerState = { v: 1, wallets };
+  if (version < 0) {
+    const { error } = await getSupabaseAdmin().from("declare_rooms").insert({
+      code: LEDGER_CODE,
+      n: 0,
+      cards_n: 0,
+      seats: [],
+      status: "ledger",
+      state: state as never,
+      version: 0,
+    });
+    if (error) {
+      if (/duplicate|already exists/i.test(error.message)) throw new Error("conflict");
+      throw new Error(error.message);
+    }
+    return;
+  }
+  const { data, error } = await getSupabaseAdmin()
+    .from("declare_rooms")
+    .update({ state: state as never, version: version + 1, updated_at: new Date().toISOString() })
+    .eq("code", LEDGER_CODE)
+    .eq("version", version)
+    .select("version");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("conflict");
+}
+
+async function mutateLedger(change: (wallets: WalletRow[]) => void): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ledger = await readLedger();
+    const wallets = ledger.wallets.map((row) => ({
+      ...row,
+      applied_keys: Array.isArray(row.applied_keys) ? [...(row.applied_keys as string[])] : [],
+    }));
+    change(wallets);
+    try {
+      await writeLedger(ledger.version, wallets);
+      return;
+    } catch (e) {
+      if (e instanceof Error && e.message === "conflict" && attempt < 2) continue;
+      throw e;
+    }
+  }
+  throw new Error("conflict");
+}
+
 export async function loadWallet(id: string): Promise<Wallet | null> {
   if (!supabaseReady()) {
     const row = readMemory().wallets.find((item) => item.id === id);
     return row ? rowToWallet(row) : null;
   }
+  if (walletTableMissing) {
+    const ledger = await readLedger();
+    const row = ledger.wallets.find((item) => item.id === id);
+    return row ? rowToWallet(row) : null;
+  }
   const { data, error } = await getSupabaseAdmin().from("declare_wallets").select("*").eq("id", id).maybeSingle();
+  if (noteWalletTable(error)) return loadWallet(id);
   if (error) throw new Error(error.message);
   return data ? rowToWallet(data as WalletRow) : null;
 }
@@ -265,6 +348,13 @@ async function insertWallet(wallet: Wallet): Promise<void> {
     writeMemory(store);
     return;
   }
+  if (walletTableMissing) {
+    await mutateLedger((wallets) => {
+      if (wallets.some((item) => item.id === wallet.id)) return;
+      wallets.push(row);
+    });
+    return;
+  }
   const { error } = await getSupabaseAdmin().from("declare_wallets").insert({
     id: wallet.id,
     chips: wallet.chips,
@@ -272,6 +362,7 @@ async function insertWallet(wallet: Wallet): Promise<void> {
     version: wallet.version,
     applied_keys: wallet.appliedKeys as never,
   });
+  if (noteWalletTable(error)) return insertWallet(wallet);
   if (error) throw new Error(error.message);
 }
 
@@ -289,6 +380,18 @@ export async function saveWallet(wallet: Wallet): Promise<void> {
     writeMemory(store);
     return;
   }
+  if (walletTableMissing) {
+    await mutateLedger((wallets) => {
+      const saved = wallets.find((item) => item.id === wallet.id && item.version === wallet.version);
+      if (!saved) throw new Error("conflict");
+      saved.chips = wallet.chips;
+      saved.claim_available_at = row.claim_available_at;
+      saved.applied_keys = wallet.appliedKeys;
+      saved.version = wallet.version + 1;
+    });
+    wallet.version += 1;
+    return;
+  }
   const { data, error } = await getSupabaseAdmin()
     .from("declare_wallets")
     .update({
@@ -301,6 +404,7 @@ export async function saveWallet(wallet: Wallet): Promise<void> {
     .eq("id", wallet.id)
     .eq("version", wallet.version)
     .select("version");
+  if (noteWalletTable(error)) return saveWallet(wallet);
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) throw new Error("conflict");
   wallet.version += 1;

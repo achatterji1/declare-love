@@ -13,6 +13,7 @@ import {
   reveal,
   startGame,
 } from "../src/lib/declare-engine.ts";
+import { readFileSync } from "node:fs";
 import {
   CLAIM_AMOUNT,
   CLAIM_INTERVAL_MS,
@@ -23,6 +24,7 @@ import {
   createWallet,
   credit,
   humanDisplayName,
+  isMissingWalletTable,
   trySit,
 } from "../src/lib/declare-chips.ts";
 
@@ -633,6 +635,65 @@ testPlayingTableDoesNotTakeALateJoiner();
 testEmptySeatNeverTakesTheTurnOrCenterCard();
 testTierClocks();
 testMoveClockByTierKeepsCenterCard();
+function chainRaceRoom() {
+  const room = room4();
+  room.G.phase = "chain";
+  room.G.chainPid = 0;
+  room.G.chainRank = "7";
+  room.G.free = true;
+  room.G.pile = [{ r: "7", s: "S" }];
+  room.G.players[0].slots[0] = card("7", "H", 4);
+  room.G.pick = ["0:0", "1:0"];
+  return room;
+}
+
+function testOneDiscardPerCenterCard() {
+  const raced = chainRaceRoom();
+  assert.equal(handleAction(raced, 2, { action: "offDiscard", p: 1, i: 0 }), true);
+  assert.equal(raced.G.phase, "dumpGive");
+  assert.equal(handleAction(raced, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), false);
+  assert.equal(raced.G.players[0].slots[0].r, "7");
+  assert.equal(handleAction(raced, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
+  assert.equal(raced.G.phase, "draw");
+  assert.equal(raced.G.turn, 1);
+  assert.equal(raced.G.chainRank, null);
+  assert.equal(raced.G.players[0].slots[0].r, "7");
+  assert.notEqual(handleAction(raced, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(raced.G.turn, 1);
+  assert.equal(raced.G.players[0].slots[0].r, "7");
+
+  const ours = chainRaceRoom();
+  assert.equal(handleAction(ours, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(ours.G.phase, "draw");
+  assert.equal(ours.G.turn, 1);
+  assert.equal(ours.G.players[0].slots[0], null);
+  assert.equal(ours.G.pile[ours.G.pile.length - 1].s, "H");
+  assert.equal(ours.G.players[1].slots[0].r, "7");
+}
+
+function testClaimTableMissingIsRecognized() {
+  assert.equal(isMissingWalletTable("Could not find the table 'public.declare_wallets' in the schema cache"), true);
+  assert.equal(isMissingWalletTable("conflict"), false);
+}
+
+function testLobbyCopyStaysQuiet() {
+  const html = readFileSync(new URL("../public/declare/index.html", import.meta.url), "utf8");
+  assert.equal(html.includes("A round takes only a few minutes"), false);
+  assert.equal(html.includes("Chips stay in your wallet"), false);
+  assert.equal(html.includes("30s"), false);
+  assert.equal(html.includes("15s"), false);
+  assert.equal(html.includes('class="primary" type="button" onclick="deal(2)"'), true);
+  assert.equal(html.includes('class="outline" type="button" onclick="createInvite()"'), true);
+  assert.equal(html.includes('id="claimBtn"'), true);
+  assert.equal(html.includes("claimBtn") && html.includes('class="primary" type="button" onclick="claimBonus()"'), false);
+  const manual = html.slice(html.indexOf('id="manual"'));
+  assert.equal(manual.includes("Learning manual"), true);
+  assert.equal(manual.includes("Each player gets four or six cards"), true);
+}
+
 testOffTurnKnownMatchOnly();
 testOffTurnGiveTimeoutPicksACard();
+testOneDiscardPerCenterCard();
+testClaimTableMissingIsRecognized();
+testLobbyCopyStaysQuiet();
 console.log("chip rules ok");

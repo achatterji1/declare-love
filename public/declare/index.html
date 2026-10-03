@@ -74,6 +74,8 @@
   button:disabled { opacity: .42; cursor: default; box-shadow: none; }
   .primary { background: var(--ink); border-color: var(--ink); color: var(--cream); font-weight: 600; }
   .primary:hover:not(:disabled) { background: var(--olive-dark); border-color: var(--olive-dark); }
+  .outline { background: var(--cream); border-color: var(--olive); color: var(--olive-dark); font-weight: 700; }
+  .outline:hover:not(:disabled) { background: var(--panel-soft); border-color: var(--olive); color: var(--olive-dark); }
   .panel {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -101,14 +103,39 @@
   .join-row button, .join-row input { margin: 0; }
   #choice { grid-column: 1 / -1; min-height: 1.3em; margin: 0; padding: 14px 28px; border-top: 1px solid var(--line); background: var(--panel-soft); color: var(--muted); text-align: center; font-size: .9rem; }
   .chip-lobby { padding: 22px 28px 8px; border-top: 1px solid var(--line); background: #fbf8f3; }
-  .chip-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
-  .chip-head p { margin: 6px 0 0; color: var(--muted); max-width: 42em; }
-  .wallet-box { text-align: right; min-width: 200px; }
+  .chip-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; }
+  .wallet-box { text-align: right; min-width: 160px; }
   .wallet-box strong { font-size: 1.35rem; }
+  #claimBtn {
+    display: inline-block; margin: 4px 0 0; padding: 0; background: transparent; border: 0; box-shadow: none;
+    color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  }
+  #claimBtn:hover:not(:disabled) { background: transparent; border: 0; color: var(--ink); transform: none; }
   #claimHint { color: var(--muted); font-size: .85rem; min-height: 1.2em; }
-  .tier-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }
-  .tier-row button { margin: 0; min-height: 68px; }
-  .tier-row .buy { display: block; color: var(--muted); font-size: .78rem; font-weight: 650; }
+  .tier-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0 8px; }
+  .tier-row button.tier {
+    margin: 0; padding: 0 0 4px; min-height: 0; background: transparent; border: 0; box-shadow: none;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+  }
+  .tier-row button.tier:hover:not(:disabled) { background: transparent; border: 0; transform: translateY(-1px); }
+  .tier-frame {
+    width: 100%; aspect-ratio: 58 / 82; display: grid; place-items: center;
+    border-radius: 9px; border: 1px solid #c3ae91;
+    background: linear-gradient(150deg, #fffdf7, #f3e9d9);
+    box-shadow: 0 4px 8px rgba(71,52,35,.16), inset 0 0 0 2px rgba(255,255,255,.5);
+  }
+  .tier-chip { width: 44%; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center; }
+  .tier-chip i { width: 72%; aspect-ratio: 1; border-radius: 50%; display: block; }
+  .tier-chip.brass { background: #6f5e49; }
+  .tier-chip.brass i { background: #8d7860; }
+  .tier-chip.silver { background: #9a968e; }
+  .tier-chip.silver i { background: #c4c0b7; }
+  .tier-chip.gold { background: #8a7660; }
+  .tier-chip.gold i { background: #a89270; }
+  .tier-chip.black { background: #1a1b16; }
+  .tier-chip.black i { background: #2a2b26; }
+  .tier-name { margin-top: 10px; font-family: "Playfair Display", serif; font-size: 1.02rem; font-weight: 600; color: var(--ink); }
+  .tier-stake { margin-top: 2px; color: var(--muted); font-size: .68rem; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
   #chipStatus { color: var(--olive-dark); font-weight: 650; min-height: 1.2em; }
   .open-tables { display: grid; gap: 8px; margin: 8px 0 16px; }
   .table-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
@@ -391,7 +418,7 @@
   <p id="err"></p>
   <section id="setup" class="panel">
     <div class="setup-intro">
-      <div><h2>Choose your table</h2><p>A round takes only a few minutes.</p></div>
+      <div><h2>Choose your table</h2></div>
     </div>
     <div class="mode-grid">
       <article class="mode">
@@ -415,7 +442,7 @@
         <p>Create a private table, or join friends with their four-character code.</p>
         <div class="field"><label for="name">Your name</label><input id="name" placeholder="Enter your name" maxlength="16"></div>
         <div class="field"><label for="numPlayers">Players</label><input id="numPlayers" type="number" min="2" max="8" value="2"></div>
-        <div class="action-stack"><button class="primary" type="button" onclick="createInvite()">Create private table</button></div>
+        <div class="action-stack"><button class="outline" type="button" onclick="createInvite()">Create private table</button></div>
         <div class="field"><label for="joinCode">Have a code?</label><div class="join-row"><input id="joinCode" placeholder="ABC12" maxlength="5" style="text-transform:uppercase"><button type="button" onclick="joinInvite()">Join</button></div></div>
         <div id="inviteBox" style="display:none;margin-top:10px">
           <div>Room code: <strong id="inviteCode"></strong></div>
@@ -426,10 +453,7 @@
     </div>
     <section class="chip-lobby" id="chipLobby">
       <div class="chip-head">
-        <div>
-          <h2>Chip tables</h2>
-          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. A table waits for players, up to 4. Once the hand starts, no one else can sit. A player who leaves is out for that hand: the seat stays empty and their buy-in stays in the pot.</p>
-        </div>
+        <h2>Chip tables</h2>
         <div class="wallet-box">
           <div>Wallet <strong id="walletChips">—</strong></div>
           <button type="button" id="claimBtn" onclick="claimBonus()">Claim 5000</button>
@@ -437,10 +461,10 @@
         </div>
       </div>
       <div class="tier-row">
-        <button type="button" data-tier="bronze" onclick="sitTier('bronze')">Bronze<span class="buy">500 chips · 30s</span></button>
-        <button type="button" data-tier="silver" onclick="sitTier('silver')">Silver<span class="buy">1000 chips · 30s</span></button>
-        <button type="button" data-tier="gold" onclick="sitTier('gold')">Gold<span class="buy">2500 chips · 30s</span></button>
-        <button type="button" data-tier="vip" onclick="sitTier('vip')">VIP<span class="buy">5000 chips · 15s</span></button>
+        <button type="button" class="tier" data-tier="bronze" onclick="sitTier('bronze')"><span class="tier-frame" aria-hidden="true"><span class="tier-chip brass"><i></i></span></span><span class="tier-name">Bronze</span><span class="tier-stake">500 chips</span></button>
+        <button type="button" class="tier" data-tier="silver" onclick="sitTier('silver')"><span class="tier-frame" aria-hidden="true"><span class="tier-chip silver"><i></i></span></span><span class="tier-name">Silver</span><span class="tier-stake">1000 chips</span></button>
+        <button type="button" class="tier" data-tier="gold" onclick="sitTier('gold')"><span class="tier-frame" aria-hidden="true"><span class="tier-chip gold"><i></i></span></span><span class="tier-name">Gold</span><span class="tier-stake">2500 chips</span></button>
+        <button type="button" class="tier" data-tier="vip" onclick="sitTier('vip')"><span class="tier-frame" aria-hidden="true"><span class="tier-chip black"><i></i></span></span><span class="tier-name">VIP</span><span class="tier-stake">5000 chips</span></button>
       </div>
       <p id="chipStatus"></p>
       <div id="openTables" class="open-tables"></div>
@@ -981,11 +1005,25 @@ function tierLabel(tier) {
   if (tier === "vip") return "VIP";
   return "Table";
 }
+var PLAYER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function newPlayerId() {
+  var bytes = new Uint8Array(16);
+  try {
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(bytes);
+    else throw new Error("no crypto");
+  } catch (e) {
+    for (var i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  var hex = "";
+  for (var j = 0; j < 16; j++) hex += (bytes[j] + 256).toString(16).slice(1);
+  return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+}
 function ensurePlayerId() {
-  if (playerId) return playerId;
+  if (playerId && PLAYER_ID_RE.test(playerId)) return playerId;
   try { playerId = localStorage.getItem("declare-player-id"); } catch (e) { playerId = null; }
-  if (!playerId && window.crypto && crypto.randomUUID) playerId = crypto.randomUUID();
-  if (!playerId) playerId = "00000000-0000-4000-8000-" + String(Date.now()).slice(-12).padStart(12, "0");
+  if (!playerId || !PLAYER_ID_RE.test(playerId)) playerId = newPlayerId();
   try { localStorage.setItem("declare-player-id", playerId); } catch (e) {}
   return playerId;
 }
@@ -1259,7 +1297,7 @@ function chainOppTargets(c) {
 }
 function offTurnWindow(c) {
   if (!c || c.myTurn || c.pending || c.n !== 4 || !c.pileTop) return false;
-  if (c.phase === "act") return true;
+  if (c.phase === "act" || c.phase === "chain") return true;
   if (c.phase === "draw" && c.free) return true;
   return false;
 }
@@ -1296,7 +1334,7 @@ function legalMovesFrom(source) {
     }
     if (offTurnWindow(c) && source.zone === "hand" && source.p !== c.you && occupied(c, source.p, source.i)) {
       var seen = faceForMove(c, source.p, source.i);
-      if (seen && seen.r === c.pileTop.r) off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
+      if (seen) off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
     }
     return off;
   }
@@ -1307,7 +1345,7 @@ function legalMovesFrom(source) {
     if (c.phase === "act" && own.length) moves.push({ gesture: "swap", targets: own });
     if (c.phase === "draw" && c.free && own.length) moves.push({ gesture: "claim", targets: own });
     if (dumpWindow(c)) {
-      var opps = c.phase === "chain" ? chainOppTargets(c) : oppTargets(c);
+      var opps = oppTargets(c);
       if (opps.length) moves.push({ gesture: "dump", targets: opps });
     }
   }
@@ -1317,7 +1355,7 @@ function legalMovesFrom(source) {
     if (mine && (c.phase === "act" || (c.phase === "draw" && c.free && c.pileTop) || (c.phase === "pick" && c.intent === "discard" && c.pick.indexOf(key) >= 0))) {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
-    if (mine && c.phase === "chain" && c.pick.indexOf(key) >= 0) {
+    if (mine && c.phase === "chain") {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
     if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0) {
@@ -1349,7 +1387,7 @@ function dragHintFor(c) {
     return "Waiting for the other player.";
   }
   if (c.phase === "dumpGive") return "Drag one of your cards onto the empty slot.";
-  if (c.phase === "chain") return "Drag one matching card onto the center, or Pass.";
+  if (c.phase === "chain") return "Drag a card from your hand onto the center, or Pass.";
   if (c.phase === "power") {
     if (c.powerStep === "q-mine" || c.powerStep === "q-theirs") return "Drag one of your cards onto an opponent card to trade.";
     if (c.powerStep === "k-trade") return "Drag your peeked card onto theirs to trade, or Pass.";
@@ -1391,7 +1429,8 @@ function syncChrome(c, memorizing) {
 }
 function slotWantsPick(c, pid, i) {
   if (!c || !c.pick || c.pick.indexOf(pid + ":" + i) < 0) return false;
-  if (c.phase === "chain" || c.phase === "dumpGive" || c.phase === "pick") return true;
+  if (c.phase === "chain") return false;
+  if (c.phase === "dumpGive" || c.phase === "pick") return true;
   if (c.phase === "power" && c.powerStep !== "q-mine" && c.powerStep !== "q-theirs" && c.powerStep !== "k-trade") return true;
   return false;
 }
