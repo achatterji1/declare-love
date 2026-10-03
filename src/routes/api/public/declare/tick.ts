@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { applyTimers } from "@/lib/declare-engine";
-import { loadRoom, saveRoom, writeViews } from "@/lib/declare-store.server";
+import { advanceAndSave } from "@/lib/declare-store.server";
 
 const Body = z.object({
   code: z.string().trim().min(1).max(8),
@@ -16,17 +15,8 @@ export const Route = createFileRoute("/api/public/declare/tick")({
         if (!parsed.success) {
           return Response.json({ error: "Invalid tick request." }, { status: 400 });
         }
-        const code = parsed.data.code.toUpperCase();
-        const room = await loadRoom(code);
+        const room = await advanceAndSave(parsed.data.code.toUpperCase());
         if (!room) return Response.json({ error: "Room not found." }, { status: 404 });
-        if (applyTimers(room)) {
-          try {
-            await saveRoom(room);
-            await writeViews(room);
-          } catch {
-            // Concurrent writer won; timers are idempotent, so this is fine.
-          }
-        }
         return Response.json({ ok: true });
       },
     },

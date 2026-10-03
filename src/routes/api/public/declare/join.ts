@@ -21,6 +21,7 @@ export const Route = createFileRoute("/api/public/declare/join")({
 
         try {
           const { room, result } = await mutateRoom(code, (r) => {
+            if (r.tier) throw new Error("Join this table from the chip lobby.");
             if (r.status !== "lobby") throw new Error("That game has already started.");
             const idx = r.seats.findIndex((s) => s === null);
             if (idx < 0) throw new Error("Room is full.");
