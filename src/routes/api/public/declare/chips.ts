@@ -32,8 +32,8 @@ export const Route = createFileRoute("/api/public/declare/chips")({
             return Response.json(await claimBonus(body.playerId));
           }
           if (body.op === "lobby") {
-            const wallet = body.playerId ? await loadWallet(body.playerId) : null;
-            return Response.json({ tables: await listTables(), wallet: wallet ? walletView(wallet) : null });
+            const listed = await listTables(body.playerId);
+            return Response.json(listed);
           }
           if (body.op === "sit") {
             if (!body.playerId) return Response.json({ error: "Wallet not found." }, { status: 400 });

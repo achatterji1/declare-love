@@ -688,6 +688,7 @@ var cardMemory = {};
 var playerId = null;
 var chipWallet = null;
 var lobbyTimer = null;
+var lobbySeq = 0;
 var claimTicker = null;
 var TIER_BUY = { bronze: 500, silver: 1000, gold: 2500, vip: 5000 };
 
@@ -1073,7 +1074,9 @@ function renderOpenTables(tables) {
 }
 function loadChipLobby() {
   ensurePlayerId();
+  var seq = ++lobbySeq;
   return api("chips", { op: "lobby", playerId: playerId }).then(function(res) {
+    if (seq !== lobbySeq) return;
     if (res.wallet) showWallet(res.wallet);
     renderOpenTables(res.tables || []);
   }).catch(function() {});
