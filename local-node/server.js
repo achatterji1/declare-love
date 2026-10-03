@@ -341,6 +341,7 @@ function publicState(room, viewerId) {
     keepBoth: G.phase === "keepBoth" && G.keepBoth ? { pid: G.keepBoth.pid, handI: G.keepBoth.handI, placedI: G.keepBoth.placedI } : null,
     pending: G.pending || null,
     actEndsAt: G.actEndsAt || null,
+    turnEndsAt: !G.pending && G.turnEndsAt ? G.turnEndsAt : null,
     phaseEndsAt: G.phase === "keepBoth" ? room.keepBothEndsAt || null : G.phase === "peekReveal" ? room.peekEndsAt || null : null,
     memorizeEndsAt: G.phase === "memorize" ? G.memorizeEndsAt : null,
     memorizeReady: G.phase === "memorize" ? G.memorizeReady.slice() : null,
@@ -372,7 +373,105 @@ function send(ws, msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
 }
 
+function turnWaiting(G) {
+  if (!G || G.pending) return false;
+  return G.phase === "draw" || G.phase === "act" || G.phase === "pick" || G.phase === "chain" || G.phase === "power" || G.phase === "dumpGive";
+}
+function turnWaitKey(G) {
+  return [G.turn, G.phase, G.powerStep || "", G.intent || "", G.chainRank || ""].join("|");
+}
+function clearTurnTimeout(room) {
+  if (room.turnTimer) {
+    clearTimeout(room.turnTimer);
+    room.turnTimer = null;
+  }
+}
+function syncTurnClock(room) {
+  const G = room.G;
+  if (!G || room.status !== "playing" || !turnWaiting(G)) {
+    clearTurnTimeout(room);
+    if (G) {
+      G.turnEndsAt = null;
+      G.turnWaitKey = null;
+    }
+    return;
+  }
+  const key = turnWaitKey(G);
+  if (G.turnEndsAt != null && (G.turnWaitKey === key || G.turnWaitKey == null)) {
+    if (G.turnWaitKey == null) G.turnWaitKey = key;
+    if (!room.turnTimer) {
+      const wait = Math.max(0, G.turnEndsAt - Date.now());
+      room.turnTimer = setTimeout(() => expireTurn(room), wait);
+    }
+    return;
+  }
+  G.turnWaitKey = key;
+  G.turnEndsAt = Date.now() + ACT_MS;
+  clearTurnTimeout(room);
+  room.turnTimer = setTimeout(() => expireTurn(room), ACT_MS);
+}
+function expireTurn(room) {
+  room.turnTimer = null;
+  const G = room.G;
+  if (!G || room.status !== "playing" || G.pending || G.turnEndsAt == null) return;
+  if (Date.now() + 50 < G.turnEndsAt) return;
+  autoPass(room);
+}
+function autoPass(room) {
+  const G = room.G;
+  if (!G) return;
+  G.turnEndsAt = null;
+  G.turnWaitKey = null;
+  clearTurnTimeout(room);
+  G.pending = null;
+  G.actEndsAt = null;
+  const top = pileTop(G);
+  if (G.phase === "chain") {
+    const keepCenter = G.chainSkipFree === false;
+    G.pick = [];
+    G.chainPid = null;
+    G.chainRank = null;
+    G.chainSkipFree = null;
+    if (keepCenter) G.free = false;
+    else if (top) G.free = true;
+    G.log = "Time's up. Passed.";
+    return finish(room);
+  }
+  if (G.phase === "power") {
+    G.free = true;
+    G.log = "Time's up. Passed.";
+    G.power = null;
+    G.powerStep = null;
+    G.powerTarget = null;
+    G.powerMine = null;
+    G.pick = [];
+    return finish(room);
+  }
+  if (G.phase === "dumpGive" && G.dumpGive) {
+    const giveI = G.players[G.dumpGive.actor].slots.findIndex((c) => !!c);
+    G.log = "Time's up. Passed.";
+    if (giveI >= 0) return completeDumpGive(room, giveI);
+  }
+  if (G.phase === "act" && top) {
+    G.free = true;
+    G.intent = null;
+    G.pick = [];
+    G.log = "Time's up. Passed. " + label(top) + " stays in the center — next player can Pick it or Discard a match.";
+    return finish(room);
+  }
+  if (G.phase === "draw" && !G.deck.length && !top) return reveal(room);
+  G.intent = null;
+  G.pick = [];
+  G.power = null;
+  G.powerStep = null;
+  G.powerTarget = null;
+  G.powerMine = null;
+  if (top) G.free = true;
+  G.log = "Time's up. Passed.";
+  return finish(room);
+}
 function broadcast(room) {
+  syncTurnClock(room);
   for (let i = 0; i < room.seats.length; i++) {
     const seat = room.seats[i];
     if (!seat) continue;
@@ -515,8 +614,9 @@ function expireActChoice(room) {
   const G = room.G;
   if (!G || room.status !== "playing" || G.actEndsAt == null) return;
   if (Date.now() + 50 < G.actEndsAt) return;
-  if (!decisionTimerOpen(G)) {
-    clearDecisionTimer(room);
+  if (!G.pending || !decisionTimerOpen(G)) {
+    if (!G.pending) G.actEndsAt = null;
+    clearActTimeout(room);
     return broadcast(room);
   }
   forceKeepDrawn(room);
@@ -859,9 +959,9 @@ function handleAction(room, pid, msg) {
     G.phase = "act";
     G.pick = [];
     G.pending = null;
+    G.actEndsAt = null;
     addDumpPicks(G, pid);
-    armDecisionTimer(room);
-    G.log = "Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to confirm — if time runs out you keep this card.";
+    G.log = "Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you pass.";
     return broadcast(room);
   }
 
@@ -873,8 +973,10 @@ function handleAction(room, pid, msg) {
       G.pending = choice;
     } else if (choice === "claim" && G.phase === "draw" && G.free && top) {
       G.pending = choice;
-      if (G.actEndsAt == null) armDecisionTimer(room);
     } else return;
+    if (G.actEndsAt == null) armDecisionTimer(room);
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
     G.log = choiceVerb(choice) + " " + label(top) + "? Yes to confirm, No to choose again.";
     return broadcast(room);
   }

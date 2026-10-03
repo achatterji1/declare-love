@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { makeDeal, handleAction, publicState, endKeepBothReveal, applyTimers } from "../src/lib/declare-engine.ts";
+import { makeDeal, handleAction, publicState, endKeepBothReveal, applyTimers, ACT_MS } from "../src/lib/declare-engine.ts";
 
 function roomWith(G) {
   return {
@@ -333,7 +333,86 @@ testSwapAndPick();
 testIllegalDragNoChange();
 testChainDumpDoesNotTakeCenter();
 testRedealAfterReveal();
+function testMoveClockPassesAndConfirmKeeps() {
+  const passed = base();
+  passed.G.phase = "act";
+  passed.G.pending = null;
+  passed.G.actEndsAt = null;
+  passed.G.pile = [{ r: "5", s: "H" }];
+  passed.G.turnEndsAt = Date.now() - 20;
+  passed.G.turnWaitKey = "0|act|||";
+  const deck = passed.G.deck.length;
+  assert.equal(applyTimers(passed, Date.now()), true);
+  assert.equal(passed.G.turn, 1);
+  assert.equal(passed.G.phase, "draw");
+  assert.equal(passed.G.free, true);
+  assert.equal(passed.G.pile[passed.G.pile.length - 1].r, "5");
+  assert.equal(passed.G.deck.length, deck);
+  assert.ok(passed.G.turnEndsAt > Date.now());
+  assert.equal(passed.G.players[0].slots.some((c) => c && c.r === "5"), false);
+
+  const confirm = base();
+  confirm.G.phase = "act";
+  confirm.G.pending = "pass";
+  confirm.G.actEndsAt = Date.now() - 20;
+  confirm.G.turnEndsAt = null;
+  confirm.G.pile = [{ r: "5", s: "H" }];
+  applyTimers(confirm, Date.now());
+  assert.equal(confirm.G.phase, "keepBoth");
+  assert.ok(confirm.G.players[0].slots.some((c) => c && c.r === "5"), "confirm timeout still keeps the card");
+
+  const memorizing = base();
+  memorizing.G.phase = "memorize";
+  memorizing.G.memorizeReady = [false, false];
+  memorizing.G.memorizeEndsAt = Date.now() - 20;
+  memorizing.G.turnEndsAt = null;
+  applyTimers(memorizing, Date.now());
+  assert.equal(memorizing.G.phase, "draw");
+  assert.equal(memorizing.G.turn, 0);
+  assert.ok(memorizing.G.turnEndsAt > Date.now());
+  assert.ok(memorizing.G.turnEndsAt <= Date.now() + ACT_MS);
+
+  const drawing = base();
+  drawing.G.phase = "draw";
+  drawing.G.pile = [];
+  drawing.G.free = false;
+  drawing.G.turnEndsAt = Date.now() - 5;
+  const before = drawing.G.deck.length;
+  applyTimers(drawing, Date.now());
+  assert.equal(drawing.G.turn, 1);
+  assert.equal(drawing.G.deck.length, before, "a timed-out turn does not draw");
+
+  const fresh = base();
+  fresh.G.phase = "draw";
+  fresh.G.pile = [];
+  fresh.G.deck.push({ r: "9", s: "C" });
+  handleAction(fresh, 0, { action: "draw" });
+  assert.equal(fresh.G.phase, "act");
+  assert.equal(fresh.G.actEndsAt, null);
+  assert.ok(fresh.G.turnEndsAt > Date.now());
+  handleAction(fresh, 0, { action: "pending", choice: "pass" });
+  assert.equal(fresh.G.pending, "pass");
+  assert.ok(fresh.G.actEndsAt > Date.now());
+  assert.equal(fresh.G.turnEndsAt, null);
+  assert.equal(publicState(fresh, 0).turnEndsAt, null);
+  assert.equal(publicState(fresh, 0).actEndsAt, fresh.G.actEndsAt);
+
+  const chain = base();
+  chain.G.phase = "chain";
+  chain.G.chainPid = 0;
+  chain.G.chainRank = "Q";
+  chain.G.pile = [{ r: "Q", s: "S" }];
+  chain.G.free = true;
+  chain.G.turnEndsAt = Date.now() - 5;
+  applyTimers(chain, Date.now());
+  assert.equal(chain.G.turn, 1);
+  assert.equal(chain.G.phase, "draw");
+  assert.equal(chain.G.pile[chain.G.pile.length - 1].r, "Q");
+  assert.notEqual(chain.G.phase, "keepBoth");
+}
+
 testQuitDismissesTable();
+testMoveClockPassesAndConfirmKeeps();
 testOnlineKeepBothFinishesAfterReload();
 testStuckRevealPhasesEnd();
 testOnlinePeekFinishesAfterReload();
