@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { leaveSeat } from "@/lib/declare-engine";
+import { requireUser } from "@/lib/declare-auth.server";
 import { mutateRoom, seatAuthorized } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -17,8 +18,11 @@ export const Route = createFileRoute("/api/public/declare/leave")({
         if (!parsed.success) return Response.json({ ok: true });
         const { code, seat, token } = parsed.data;
         try {
+          const user = await requireUser(request);
           await mutateRoom(code.toUpperCase(), (r) => {
             if (!seatAuthorized(r, seat, token)) return;
+            const sitting = r.seats[seat];
+            if (sitting?.playerId && sitting.playerId !== user.id) return;
             leaveSeat(r, seat);
           });
         } catch {

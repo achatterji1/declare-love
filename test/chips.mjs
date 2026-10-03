@@ -23,6 +23,7 @@ import {
   computePayouts,
   createWallet,
   credit,
+  googleSignInEnabled,
   humanDisplayName,
   isMissingWalletTable,
   trySit,
@@ -691,9 +692,28 @@ function testLobbyCopyStaysQuiet() {
   assert.equal(manual.includes("Each player gets four or six cards"), true);
 }
 
+function testSignInGatesPlay() {
+  const html = readFileSync(new URL("../public/declare/index.html", import.meta.url), "utf8");
+  assert.equal(html.includes('id="signin"'), true);
+  assert.equal(html.includes('id="setup" class="panel" hidden'), true);
+  assert.equal(html.includes("Earn a chip bonus"), false);
+  assert.equal(/facebook/i.test(html), false);
+  assert.equal(html.includes('id="googleBtn" hidden'), true);
+  assert.equal(html.includes("Sign in to play."), true);
+  for (const name of ["function deal(n)", "function createInvite()", "function joinInvite()", "function sitTier(tier)", "function sitCode(code)"]) {
+    const start = html.indexOf(name);
+    assert.ok(start >= 0, name);
+    assert.equal(html.slice(start, start + 180).includes("if (!requirePlay()) return;"), true, name + " is gated");
+  }
+  assert.equal(googleSignInEnabled({ external: { google: false, email: false, facebook: false } }), false);
+  assert.equal(googleSignInEnabled({ external: { google: true } }), true);
+  assert.equal(googleSignInEnabled(null), false);
+}
+
 testOffTurnKnownMatchOnly();
 testOffTurnGiveTimeoutPicksACard();
 testOneDiscardPerCenterCard();
 testClaimTableMissingIsRecognized();
 testLobbyCopyStaysQuiet();
+testSignInGatesPlay();
 console.log("chip rules ok");

@@ -70,6 +70,12 @@ export function isMissingWalletTable(message: string): boolean {
   return /declare_wallets/i.test(message) || /schema cache/i.test(message);
 }
 
+export function googleSignInEnabled(settings: unknown): boolean {
+  if (!settings || typeof settings !== "object") return false;
+  const external = (settings as { external?: { google?: boolean } }).external;
+  return !!(external && external.google === true);
+}
+
 // Claiming is the only thing that pays the bonus or starts the next 4-hour window.
 export function applyClaim(wallet: Wallet, now: number): { wallet: Wallet; claimed: boolean } {
   if (!claimAvailable(wallet, now)) return { wallet, claimed: false };

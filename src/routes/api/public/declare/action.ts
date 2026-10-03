@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { handleAction, publicState } from "@/lib/declare-engine";
+import { requireUser } from "@/lib/declare-auth.server";
 import { creditWalletOnce, loadRoom, loadWallet, mutateRoom, seatAuthorized } from "@/lib/declare-store.server";
 import { chargeNextHand, walletView } from "@/lib/declare-table.server";
 
@@ -26,6 +27,7 @@ export const Route = createFileRoute("/api/public/declare/action")({
         const upper = code.toUpperCase();
         let redealStakes: { playerId: string; seat: number; amount: number }[] | null = null;
         try {
+          const user = await requireUser(request);
           if (action === "redeal") {
             const preview = await loadRoom(upper);
             const roundOver = !!preview?.G && (preview.G.phase === "reveal" || preview.status === "ended");
@@ -33,6 +35,8 @@ export const Route = createFileRoute("/api/public/declare/action")({
           }
           const { room, result } = await mutateRoom(upper, (r) => {
             if (!seatAuthorized(r, seat, token)) throw new Error("unauthorized");
+            const sitting = r.seats[seat];
+            if (sitting?.playerId && sitting.playerId !== user.id) throw new Error("unauthorized");
             if (redealStakes && r.tier) {
               const roundOver = !!r.G && (r.G.phase === "reveal" || r.status === "ended");
               if (!roundOver) throw new Error("That hand already started.");

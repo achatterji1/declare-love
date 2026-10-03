@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { makeCode, publicState, type Room } from "@/lib/declare-engine";
+import { requireUser } from "@/lib/declare-auth.server";
 import { insertRoom, roomExists, writeViews } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -18,6 +19,12 @@ export const Route = createFileRoute("/api/public/declare/create")({
           return Response.json({ error: "Invalid create request." }, { status: 400 });
         }
         const { n, cardsN, name } = parsed.data;
+        try {
+          await requireUser(request);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "unauthorized";
+          return Response.json({ error: msg }, { status: msg === "unauthorized" ? 401 : 400 });
+        }
 
         let code = makeCode();
         for (let i = 0; i < 10 && (await roomExists(code)); i++) code = makeCode();
