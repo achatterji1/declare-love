@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { publicState } from "@/lib/declare-engine";
-import { loadWallet, seatAuthorized } from "@/lib/declare-store.server";
-import { claimBonus, fillWithComputers, listTables, openWallet, sitDown, walletView } from "@/lib/declare-table.server";
+import { claimBonus, listTables, openWallet, sitDown } from "@/lib/declare-table.server";
 
 const Body = z
   .object({
@@ -40,21 +38,7 @@ export const Route = createFileRoute("/api/public/declare/chips")({
             return Response.json(await sitDown({ playerId: body.playerId, name: body.name || "Player", tier: body.tier, code: body.code }));
           }
           if (body.op === "fill") {
-            if (!body.code || body.seat == null || !body.token) {
-              return Response.json({ error: "Invalid chip request." }, { status: 400 });
-            }
-            const room = await fillWithComputers(body.code.toUpperCase(), body.seat, body.token);
-            if (!seatAuthorized(room, body.seat, body.token)) {
-              return Response.json({ error: "unauthorized" }, { status: 401 });
-            }
-            const wallet = room.seats[body.seat]?.playerId ? await loadWallet(room.seats[body.seat]!.playerId!) : null;
-            return Response.json({
-              code: room.code,
-              seat: body.seat,
-              token: body.token,
-              state: publicState(room, body.seat),
-              wallet: wallet ? walletView(wallet) : null,
-            });
+            return Response.json({ error: "Chip tables wait for players." }, { status: 400 });
           }
           return Response.json({ error: "Invalid chip request." }, { status: 400 });
         } catch (e) {

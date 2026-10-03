@@ -9,7 +9,6 @@ import {
   publicState,
   leaveSeat,
   reveal,
-  startGame,
 } from "../src/lib/declare-engine.ts";
 import {
   CLAIM_AMOUNT,
@@ -20,7 +19,6 @@ import {
   computePayouts,
   createWallet,
   credit,
-  fillEmptySeats,
   humanDisplayName,
   trySit,
 } from "../src/lib/declare-chips.ts";
@@ -250,14 +248,16 @@ function testMidHandQuitForfeitsOnlyThatSeat() {
     { playerId: "cy", seat: 2, amount: 500 },
     { playerId: "dee", seat: 3, amount: 500 },
   ];
+  room.G.turn = 1;
   leaveSeat(room, 1);
   assert.equal(room.status, "playing");
   assert.equal(room.pot, 2000);
   assert.equal(room.payouts, null);
   assert.equal(room.stakes.length, 4);
-  assert.equal(room.seats[1].computer, true);
-  assert.equal(room.seats[1].name, "Computer");
-  assert.equal(room.G.players[1].name, "Computer");
+  assert.equal(room.stakes.find((stake) => stake.playerId === "bo").forfeited, true);
+  assert.equal(room.seats[1], null);
+  assert.equal(room.G.players[1].name, "Open");
+  assert.equal(room.G.turn, 2);
   assert.equal(room.seats[0].playerId, "ann");
   assert.equal(room.seats[2].playerId, "cy");
   assert.equal(room.seats[3].playerId, "dee");
@@ -271,6 +271,7 @@ function testMidHandQuitForfeitsOnlyThatSeat() {
   assert.equal(room.payouts.length, 1);
   assert.equal(room.payouts[0].playerId, "ann");
   assert.equal(room.payouts[0].amount, 2000);
+  assert.equal(room.payouts.some((row) => row.playerId === "bo"), false);
 
   const lobbyRoom = {
     code: "LOB",
@@ -305,32 +306,69 @@ function testMidHandQuitForfeitsOnlyThatSeat() {
   assert.equal(lobbyRoom.stakes.length, 1);
 }
 
-function testComputerSeatsAreLabeledComputer() {
+function testQuitThenComputerOnlyWin() {
+  const room = room4();
+  room.pot = 2000;
+  room.stakes = [
+    { playerId: "ann", seat: 0, amount: 500 },
+    { playerId: "bo", seat: 1, amount: 500 },
+    { playerId: "cy", seat: 2, amount: 500 },
+    { playerId: "dee", seat: 3, amount: 500 },
+  ];
+  leaveSeat(room, 1);
+  assert.equal(room.seats[1], null);
+  assert.equal(room.stakes.find((stake) => stake.playerId === "bo").forfeited, true);
+  room.seats[0] = { name: "Computer", token: "", computer: true };
+  room.seats[2] = { name: "Computer", token: "", computer: true };
+  room.seats[3] = { name: "Computer", token: "", computer: true };
+  room.G.players[0].name = "Computer";
+  room.G.players[0].slots = [card("A", "S", 4)];
+  room.G.players[1].slots = [card("K", "C", 4)];
+  room.G.players[2].slots = [card("K", "S", 4)];
+  room.G.players[3].slots = [card("Q", "H", 4)];
+  reveal(room);
+  assert.equal(room.pot, 0);
+  assert.ok(room.payouts);
+  assert.equal(room.payouts.some((row) => row.playerId === "bo"), false);
+  assert.equal(room.payouts.reduce((sum, row) => sum + row.amount, 0), 1500);
+  assert.deepEqual(room.payouts.map((row) => row.playerId).sort(), ["ann", "cy", "dee"]);
+  let bo = createWallet("bo");
+  bo.chips = 9500;
+  for (const row of room.payouts) {
+    if (row.playerId === "bo") bo = credit(bo, row.amount, row.key);
+  }
+  assert.equal(bo.chips, 9500);
+}
+
+function testChipTablesWaitForPlayers() {
   assert.equal(humanDisplayName("Computer"), "Player");
   const room = {
-    code: "COMP",
+    code: "WAIT",
     n: 4,
     cardsN: 4,
     status: "lobby",
     version: 1,
     G: null,
-    seats: [null, null, null, null],
+    seats: [
+      { name: "Ann", token: "t", playerId: "ann" },
+      null,
+      null,
+      null,
+    ],
     tier: "gold",
     pot: 2500,
     buyIn: 2500,
     actMs: TIERS.gold.actMs,
-    stakes: [],
+    stakes: [{ playerId: "ann", seat: 0, amount: 2500 }],
     payouts: null,
   };
-  room.seats[0] = { name: "Ann", token: "t", playerId: "ann" };
-  assert.equal(fillEmptySeats(room), 3);
-  startGame(room);
   const view = publicState(room, 0);
+  assert.equal(view.waiting, true);
   assert.equal(view.players[0].name, "Ann");
   assert.equal(view.players[0].computer, false);
   for (let i = 1; i < 4; i++) {
-    assert.equal(view.players[i].name, "Computer");
-    assert.equal(view.players[i].computer, true);
+    assert.equal(view.players[i].name, null);
+    assert.equal(view.players[i].computer, false);
   }
 }
 
@@ -463,7 +501,8 @@ testPayoutKeyStaysRejected();
 testComputerWinReturnsBuyIns();
 testComputerTiePaysTheWholePotToHumans();
 testMidHandQuitForfeitsOnlyThatSeat();
-testComputerSeatsAreLabeledComputer();
+testQuitThenComputerOnlyWin();
+testChipTablesWaitForPlayers();
 testTierClocks();
 testMoveClockByTierKeepsCenterCard();
 testOffTurnKnownMatchOnly();

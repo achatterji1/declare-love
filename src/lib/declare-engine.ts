@@ -103,6 +103,7 @@ export interface Stake {
   playerId: string;
   seat: number;
   amount: number;
+  forfeited?: boolean;
 }
 
 export interface Payout {
@@ -136,8 +137,10 @@ export function moveClockMs(room: { actMs?: number | null }): number {
 function awardPot(room: Room, scores: number[]): number {
   const pot = room.pot || 0;
   if (!room.tier || pot <= 0) return 0;
-  const low = Math.min(...scores);
-  const winners = scores.map((score, index) => index).filter((index) => scores[index] === low);
+  const seated = scores.map((_, index) => index).filter((index) => room.seats[index]);
+  const pool = seated.length ? seated : scores.map((_, index) => index);
+  const low = Math.min(...pool.map((index) => scores[index]));
+  const winners = pool.filter((index) => scores[index] === low);
   const humans = winners.filter((index) => {
     const seat = room.seats[index];
     return !!(seat && !seat.computer && seat.playerId);
@@ -158,7 +161,7 @@ function awardPot(room: Room, scores: number[]): number {
   } else {
     const stakes = room.stakes || [];
     const refunds = stakes
-      .filter((stake) => stake.amount > 0 && stake.playerId)
+      .filter((stake) => stake.amount > 0 && stake.playerId && !stake.forfeited)
       .map((stake) => ({
         playerId: stake.playerId,
         amount: stake.amount,
@@ -172,8 +175,8 @@ function awardPot(room: Room, scores: number[]): number {
 }
 
 // Lobby leave refunds that one buy-in. A chip seat that leaves after the hand
-// starts forfeits only that buy-in: the seat becomes the computer, everyone
-// else stays, and the pot is still awarded at the end.
+// starts forfeits that buy-in and stays empty. The hand goes on with the
+// people still sitting.
 export function leaveSeat(room: Room, seat: number): void {
   const sitting = room.seats[seat];
   if (!sitting || sitting.computer) return;
@@ -194,8 +197,23 @@ export function leaveSeat(room: Room, seat: number): void {
     return;
   }
   if (room.tier) {
-    room.seats[seat] = { name: "Computer", token: "", computer: true };
-    if (room.G && room.G.players[seat]) room.G.players[seat].name = "Computer";
+    if (room.status !== "ended") {
+      for (const stake of room.stakes || []) {
+        if (stake.seat === seat && stake.playerId === sitting.playerId) stake.forfeited = true;
+      }
+    }
+    const G = room.G;
+    if (G?.dumpGive && G.dumpGive.actor === seat) {
+      const giveI = G.players[seat].slots.findIndex((card) => !!card);
+      if (giveI >= 0) completeDumpGive(room, giveI);
+    }
+    room.seats[seat] = null;
+    if (G && G.players[seat]) G.players[seat].name = "Open";
+    if (G?.memorizeReady) {
+      for (let i = 0; i < G.n; i++) if (!room.seats[i]) G.memorizeReady[i] = true;
+      if (G.phase === "memorize" && G.memorizeReady.every(Boolean)) endMemorize(room);
+    }
+    if (G && G.phase !== "reveal" && G.phase !== "memorize" && !room.seats[G.turn]) nextTurn(room);
     return;
   }
   room.status = "abandoned";
@@ -544,8 +562,9 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     pileUnder: G.pile.length > 1 ? { r: G.pile[G.pile.length - 2].r, s: G.pile[G.pile.length - 2].s } : null,
     players: G.players.map((p) => ({
       id: p.id,
-      name: room.seats[p.id]?.computer ? "Computer" : p.name,
+      name: room.seats[p.id] ? (room.seats[p.id]?.computer ? "Computer" : p.name) : "Open",
       computer: !!room.seats[p.id]?.computer,
+      vacant: !room.seats[p.id],
       declared: p.declared,
       memorizeReady: G.phase === "memorize" ? !!(G.memorizeReady && G.memorizeReady[p.id]) : null,
       score: G.phase === "reveal" ? score(p) : null,
@@ -1140,8 +1159,13 @@ export function finish(room: Room): void {
 export function nextTurn(room: Room): void {
   const G = room.G!;
   clearDecisionTimer(G);
+  if (room.tier && G.declarer !== null) G.queue = G.queue.filter((id) => !!room.seats[id]);
   if (G.declarer !== null && !G.queue.length) return reveal(room);
-  G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
+  for (let step = 0; step < G.n; step++) {
+    G.turn = G.declarer !== null ? G.queue[0] : (G.turn + 1) % G.n;
+    if (!room.tier || room.seats[G.turn]) break;
+  }
+  if (room.tier && !room.seats.some(Boolean)) return reveal(room);
   G.phase = "draw";
   refreshActDumpPicks(G);
 }
@@ -1150,9 +1174,13 @@ export function reveal(room: Room): void {
   const G = room.G!;
   G.phase = "reveal";
   const scores = G.players.map(score);
-  const low = Math.min(...scores);
+  const pool = room.tier
+    ? scores.map((_, index) => index).filter((index) => room.seats[index])
+    : scores.map((_, index) => index);
+  const considered = pool.length ? pool : scores.map((_, index) => index);
+  const low = Math.min(...considered.map((index) => scores[index]));
   let text = scores.map((s, i) => G.players[i].name + " " + s).join(", ") + ". ";
-  const winners = G.players.filter((_, i) => scores[i] === low).map((p) => p.name);
+  const winners = considered.filter((index) => scores[index] === low).map((index) => G.players[index].name);
   if (room.tier && room.pot) {
     const pot = awardPot(room, scores);
     text += "Pot " + pot + ". ";
@@ -1394,7 +1422,8 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
   // A finished round is phase "reveal" and status "ended". Those used to
   // return before this action was read, so New Deal never dealt again.
   if (act === "redeal") {
-    if (room.seats.filter(Boolean).length < room.n) return;
+    const seatedCount = room.seats.filter(Boolean).length;
+    if (room.tier ? seatedCount < 1 : seatedCount < room.n) return;
     const roundOver = !!G && (G.phase === "reveal" || room.status === "ended");
     if (!roundOver) return;
     startGame(room);
@@ -1768,7 +1797,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     G.players[pid].declared = true;
     G.declarer = pid;
     G.queue = [];
-    for (let i = 0; i < G.n; i++) if (i !== pid) G.queue.push(i);
+    for (let i = 0; i < G.n; i++) if (i !== pid && (!room.tier || room.seats[i])) G.queue.push(i);
     G.log =
       G.players[pid].name +
       " declared. Their hand is locked — no dumps, peeks, or trades against it. Final turns: draw/discard/pick on your own hand & center only.";

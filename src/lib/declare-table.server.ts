@@ -3,7 +3,6 @@ import {
   TIERS,
   applyBuyIn,
   applyClaim,
-  fillEmptySeats,
   humanDisplayName,
   isTier,
   type Tier,
@@ -13,12 +12,13 @@ import {
   creditWalletOnce,
   getOrCreateWallet,
   insertRoom,
+  listChipRooms,
   listLobbyRooms,
+  loadRoom,
   loadWallet,
   mutateRoom,
   roomExists,
   saveWallet,
-  seatAuthorized,
 } from "./declare-store.server";
 
 export function walletView(wallet: Wallet, now = Date.now()) {
@@ -92,7 +92,7 @@ function tableSummary(room: Room) {
 }
 
 export async function listTables(playerId?: string) {
-  const rooms = await listLobbyRooms();
+  const rooms = await listChipRooms();
   const tables = rooms.map(tableSummary).filter((row) => row && row.openSeats > 0);
   const wallet = playerId ? await getOrCreateWallet(playerId) : null;
   return { tables, wallet: wallet ? walletView(wallet) : null };
@@ -128,11 +128,16 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
   if (!wallet) throw new Error("Wallet not found.");
   let code = (input.code || "").trim().toUpperCase();
   let tier: Tier | null = null;
+  let charge = true;
   if (code) {
-    const rooms = await listLobbyRooms();
-    const found = rooms.find((room) => room.code === code);
+    const found = await loadRoom(code);
     if (!found || !found.tier) throw new Error("That table is not open.");
+    if (found.status !== "lobby" && found.status !== "playing" && found.status !== "ended") {
+      throw new Error("That table is not open.");
+    }
+    if (!found.seats.some((seat) => !seat)) throw new Error("That table is full.");
     tier = found.tier;
+    charge = found.status !== "ended";
   } else {
     if (!input.tier || !isTier(input.tier)) throw new Error("Choose Bronze, Silver, Gold, or VIP.");
     tier = input.tier;
@@ -147,21 +152,27 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
     else code = (await freshTable(tier)).code;
   }
   const buyIn = TIERS[tier].buyIn;
-  if (wallet.chips < buyIn) throw new Error("You cannot afford the buy-in.");
+  if (charge && wallet.chips < buyIn) throw new Error("You cannot afford the buy-in.");
   const token = crypto.randomUUID();
-  await debit(playerId, buyIn);
+  if (charge) await debit(playerId, buyIn);
   try {
     const { room, result } = await mutateRoom(code, (room) => {
-      if (room.status !== "lobby" || room.tier !== tier) throw new Error("That table is not open.");
+      const joinable = room.status === "lobby" || room.status === "playing" || room.status === "ended";
+      if (!joinable || room.tier !== tier) throw new Error("That table is not open.");
+      if (charge && room.status === "ended") throw new Error("That hand already ended.");
+      if (!charge && room.status !== "ended") throw new Error("That table is not open.");
       if (room.seats.some((seat) => seat && seat.playerId === playerId)) {
         throw new Error("You are already seated.");
       }
       const idx = room.seats.findIndex((seat) => !seat);
       if (idx < 0) throw new Error("That table is full.");
       room.seats[idx] = { name: humanDisplayName(input.name), token, playerId, computer: false };
-      room.pot = (room.pot || 0) + buyIn;
-      room.stakes = [...(room.stakes || []), { playerId: input.playerId, seat: idx, amount: buyIn }];
-      if (room.seats.every(Boolean)) startGame(room);
+      if (room.status === "lobby" || room.status === "playing") {
+        room.pot = (room.pot || 0) + buyIn;
+        room.stakes = [...(room.stakes || []), { playerId, seat: idx, amount: buyIn }];
+      }
+      if (room.G && room.G.players[idx]) room.G.players[idx].name = room.seats[idx]!.name;
+      if (room.status === "lobby" && room.seats.every(Boolean)) startGame(room);
       return { seat: idx, token };
     });
     const updated = await loadWallet(playerId);
@@ -173,20 +184,9 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
       wallet: updated ? walletView(updated) : null,
     };
   } catch (e) {
-    await creditWalletOnce(playerId, buyIn, "refund-sit:" + token);
+    if (charge) await creditWalletOnce(playerId, buyIn, "refund-sit:" + token);
     throw e;
   }
-}
-
-export async function fillWithComputers(code: string, seat: number, token: string) {
-  const { room } = await mutateRoom(code, (room) => {
-    if (!seatAuthorized(room, seat, token)) throw new Error("unauthorized");
-    if (room.status !== "lobby" || !room.tier) throw new Error("That table has already started.");
-    if (!room.seats.some((slot) => slot && !slot.computer)) throw new Error("A player has to sit before the computer can.");
-    fillEmptySeats(room);
-    if (room.seats.every(Boolean)) startGame(room);
-  });
-  return room;
 }
 
 export async function chargeNextHand(room: Room): Promise<{ playerId: string; seat: number; amount: number }[]> {

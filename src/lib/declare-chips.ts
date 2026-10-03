@@ -30,6 +30,7 @@ export interface Stake {
   playerId: string;
   seat: number;
   amount: number;
+  forfeited?: boolean;
 }
 
 export interface Payout {
@@ -118,21 +119,11 @@ export function trySit(
   return { ok: true, wallet: paid.wallet, seat: idx };
 }
 
-export function fillEmptySeats(room: { seats: (SeatSlot | null)[] }): number {
-  let filled = 0;
-  for (let i = 0; i < room.seats.length; i++) {
-    if (room.seats[i]) continue;
-    room.seats[i] = { name: COMPUTER_NAME, token: "", computer: true };
-    filled++;
-  }
-  return filled;
-}
-
 export function computePayouts(input: {
   pot: number;
   scores: number[];
   seats: { playerId?: string | null; computer?: boolean }[];
-  stakes?: { playerId: string; seat?: number; amount: number }[];
+  stakes?: { playerId: string; seat?: number; amount: number; forfeited?: boolean }[];
   key: string;
 }): Payout[] {
   const { pot, scores, seats, stakes, key } = input;
@@ -155,7 +146,7 @@ export function computePayouts(input: {
     return payouts;
   }
   return (stakes || [])
-    .filter((stake) => stake.amount > 0 && stake.playerId)
+    .filter((stake) => stake.amount > 0 && stake.playerId && !stake.forfeited)
     .map((stake) => ({
       playerId: stake.playerId,
       amount: stake.amount,

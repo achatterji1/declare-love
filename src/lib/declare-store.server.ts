@@ -214,6 +214,18 @@ export async function listLobbyRooms(): Promise<Room[]> {
   return ((data || []) as RoomRow[]).map(rowToRoom);
 }
 
+export async function listChipRooms(): Promise<Room[]> {
+  const open = (room: Room) =>
+    !!room.tier && (room.status === "lobby" || room.status === "playing" || room.status === "ended");
+  if (!supabaseReady()) return readMemory().rooms.map(rowToRoom).filter(open);
+  const { data, error } = await getSupabaseAdmin()
+    .from("declare_rooms")
+    .select("*")
+    .in("status", ["lobby", "playing", "ended"]);
+  if (error) throw new Error(error.message);
+  return ((data || []) as RoomRow[]).map(rowToRoom).filter(open);
+}
+
 export async function writeViews(room: Room): Promise<void> {
   if (!supabaseReady()) return;
   const admin = getSupabaseAdmin();

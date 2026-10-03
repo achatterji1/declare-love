@@ -428,7 +428,7 @@
       <div class="chip-head">
         <div>
           <h2>Chip tables</h2>
-          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. Empty seats can be filled by the computer.</p>
+          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. A table waits for players, up to 4.</p>
         </div>
         <div class="wallet-box">
           <div>Wallet <strong id="walletChips">—</strong></div>
@@ -443,7 +443,6 @@
         <button type="button" data-tier="vip" onclick="sitTier('vip')">VIP<span class="buy">5000 chips · 15s</span></button>
       </div>
       <p id="chipStatus"></p>
-      <button type="button" id="fillComputers" style="display:none" onclick="fillComputers()">Fill empty seats with Computer</button>
       <div id="openTables" class="open-tables"></div>
     </section>
     <p id="choice">Four cards selected — choose a table to begin.</p>
@@ -1121,14 +1120,6 @@ function sitCode(code) {
     setChipStatus(e.message);
   });
 }
-function fillComputers() {
-  if (!roomCode || mySeat === null || !seatToken) return;
-  api("chips", { op: "fill", code: roomCode, seat: mySeat, token: seatToken, playerId: playerId }).then(function(res) {
-    noteWallet(res);
-    handleState(res.state, res.code);
-  }).catch(function(e) { setChipStatus(e.message); });
-}
-
 function createInvite() {
   mode = "online";
   err("");
@@ -1791,20 +1782,17 @@ function renderOnline() {
     setMemorizeBar(false);
     stopMemorizeTicker();
     var seats = (online.players || []).map(function(p) {
-      var name = p.computer ? "Computer" : (p.name || "Open");
+      var name = p.vacant || !p.name ? "Open" : (p.computer ? "Computer" : p.name);
       return name + (p.ready ? " seated" : " open");
     }).join(" · ");
     document.getElementById("lobby").textContent = "Lobby (" + (online.n || 2) + " seats): " + seats;
-    var fill = document.getElementById("fillComputers");
     if (online.tier) {
-      if (fill) fill.style.display = "";
-      setChipStatus(tierLabel(online.tier) + " table " + (online.code || "") + ". Buy-in " + (online.buyIn || 0) + " is in the pot (" + (online.pot || 0) + "). Fill empty seats with the computer, or wait for players.");
-    } else if (fill) fill.style.display = "none";
+      var seated = (online.players || []).filter(function(p) { return p.ready && !p.vacant; }).length;
+      setChipStatus(tierLabel(online.tier) + " table " + (online.code || "") + ". Buy-in " + (online.buyIn || 0) + " is in the pot (" + (online.pot || 0) + "). Waiting for players (" + seated + "/4).");
+    }
     paintChipBar();
     return;
   }
-  var fillBtn = document.getElementById("fillComputers");
-  if (fillBtn) fillBtn.style.display = "none";
   document.getElementById("setup").style.display = "none";
   document.getElementById("table").style.display = "block";
   var you = online.you;
@@ -1828,7 +1816,7 @@ function renderOnline() {
     setMemorizeBar(false);
     stopMemorizeTicker();
     var turnPlayer = online.players[online.turn];
-    var turnName = turnPlayer && turnPlayer.computer ? "Computer" : (turnPlayer ? turnPlayer.name : "");
+    var turnName = turnPlayer && turnPlayer.vacant ? "Open" : (turnPlayer && turnPlayer.computer ? "Computer" : (turnPlayer ? turnPlayer.name : ""));
     document.getElementById("who").textContent = online.phase === "reveal" ? "Round over" : (turnName + (myTurn ? " (you)" : "") + (online.declarer !== null ? " · final (declarer locked)" : ""));
     syncChrome(ctx, false);
   }
@@ -1847,7 +1835,7 @@ function renderOnline() {
     var seat = document.createElement("div");
     seat.className = "seat" + (!memorizing && player.id === online.turn ? " on" : "") + (player.declared ? " locked" : "");
     var readyTag = memorizing ? (player.memorizeReady ? " · ready" : " · memorizing") : "";
-    var seatName = player.computer ? "Computer" : (player.name || "Player");
+    var seatName = player.vacant ? "Open" : (player.computer ? "Computer" : (player.name || "Player"));
     var heading = seatName + (player.id === you ? " (you)" : "") + (player.declared ? " · declared (locked)" : "") + readyTag + (player.score != null ? " · " + player.score : "");
     seat.innerHTML = "<h3></h3>";
     seat.querySelector("h3").textContent = heading;
@@ -1939,8 +1927,6 @@ function returnToSetup() {
   setMemorizeBar(false);
   err("");
   if (window.history && window.history.replaceState) window.history.replaceState(null, "", window.location.pathname);
-  var fill = document.getElementById("fillComputers");
-  if (fill) fill.style.display = "none";
   var chipBar = document.getElementById("chipBar");
   if (chipBar) { chipBar.hidden = true; chipBar.textContent = ""; }
   cardMemory = {};
