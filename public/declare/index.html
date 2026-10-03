@@ -179,7 +179,6 @@
     padding-top: 16px;
     border-top: 1px solid var(--line);
   }
-  #redeal { margin-right: auto; }
   .quit-btn {
     background: transparent;
     color: var(--muted);
@@ -222,7 +221,7 @@
     border-radius: 6px;
   }
   #log[hidden] { display: none; }
-  #actTimer {
+  #actTimer, #turnTimer {
     display: none;
     margin: 8px 3px 0;
     padding: 6px 12px;
@@ -232,8 +231,8 @@
     font-weight: 700;
     letter-spacing: .04em;
   }
-  #actTimer.on { display: inline-block; }
-  #actTimer.urgent { background: #f3d2cb; color: #8a332b; }
+  #actTimer.on, #turnTimer.on { display: inline-block; }
+  #actTimer.urgent, #turnTimer.urgent { background: #f3d2cb; color: #8a332b; }
   #confirmBar {
     display: none;
     align-items: center;
@@ -419,9 +418,11 @@
       <button type="button" id="leave" onclick="doPass()">Pass</button>
       <button type="button" id="power" onclick="doPower()">Use power</button>
       <button type="button" id="call" onclick="doDeclare()">Declare</button>
+      <button type="button" id="redeal" onclick="doRedeal()" style="display:none">Play again</button>
       <span id="who"></span>
     </div>
     <p id="dragHint"></p>
+    <p id="turnTimer"></p>
     <p id="actTimer"></p>
     <div id="confirmBar">
       <span id="confirmText">Confirm this choice?</span>
@@ -432,7 +433,6 @@
     <div id="seats" class="players"></div>
     <p id="log" hidden></p>
     <div class="table-foot">
-      <button type="button" id="redeal" onclick="doRedeal()" style="display:none">New deal</button>
       <button type="button" id="quit" class="quit-btn" onclick="doQuit()">Quit</button>
     </div>
   </section>
@@ -506,8 +506,8 @@
           </figure>
         </div>
         <div class="demo-confirm"><span>Pass 7♦?</span><span class="demo-yes">Yes</span><span class="demo-no">No</span></div>
-        <p style="text-align:center"><span class="timer-demo">0:30 to confirm</span></p>
-        <p class="caption">Nothing happens until Yes. No returns you to Pick, Pass, and Swap. If the 30 seconds run out, you keep the drawn card.</p>
+        <p style="text-align:center"><span class="timer-demo">0:30 to move</span></p>
+        <p class="caption">Nothing happens until Yes. No returns you to Pick, Pass, and Swap and the same 30 seconds keep running. If time runs out, you keep the center card and the turn ends.</p>
       </article>
       <article class="manual-page">
         <p class="manual-kicker">Step 3 · Discard and dump</p>
@@ -720,6 +720,51 @@ function stopActTicker() {
   if (actTicker) { clearInterval(actTicker); actTicker = null; }
   actTickerEnds = null;
 }
+var turnTicker = null, turnTickerEnds = null, turnTimerVisible = false;
+function stopTurnTicker() {
+  if (turnTicker) { clearInterval(turnTicker); turnTicker = null; }
+  turnTickerEnds = null;
+  turnTimerVisible = false;
+}
+function updateTurnTimerDisplay() {
+  var el = document.getElementById("turnTimer");
+  if (!el) return;
+  if (!turnTickerEnds || !turnTimerVisible) { el.textContent = ""; el.className = ""; return; }
+  var left = turnTickerEnds - Date.now();
+  el.className = left <= 10000 ? "on urgent" : "on";
+  el.textContent = formatCountdown(left) + " to move";
+}
+function startTurnTicker(endsAt, onExpire) {
+  stopTurnTicker();
+  turnTickerEnds = endsAt;
+  updateTurnTimerDisplay();
+  turnTicker = setInterval(function() {
+    updateTurnTimerDisplay();
+    if (turnTickerEnds && Date.now() >= turnTickerEnds) {
+      var cb = onExpire;
+      stopTurnTicker();
+      if (cb) cb();
+    }
+  }, 200);
+}
+function showTurnClock(endsAt, active, onExpire) {
+  var el = document.getElementById("turnTimer");
+  turnTimerVisible = !!active;
+  if (!endsAt) {
+    stopTurnTicker();
+    if (el) { el.textContent = ""; el.className = ""; }
+    return;
+  }
+  if (Date.now() >= endsAt) {
+    stopTurnTicker();
+    if (el && active) { el.className = "on urgent"; el.textContent = "0:00 to move"; }
+    if (onExpire) onExpire();
+    return;
+  }
+  startTurnTicker(endsAt, onExpire);
+  turnTimerVisible = !!active;
+  updateTurnTimerDisplay();
+}
 function updateActTimerDisplay() {
   var el = document.getElementById("actTimer");
   if (!el) return;
@@ -834,7 +879,8 @@ function handleState(state, code) {
 function scheduleTick() {
   if (tickTimeout) { clearTimeout(tickTimeout); tickTimeout = null; }
   if (!online || !roomCode) return;
-  var endsAt = online.memorizeEndsAt || online.actEndsAt || online.phaseEndsAt;
+  var times = [online.memorizeEndsAt, online.actEndsAt, online.phaseEndsAt, online.turnEndsAt].filter(Boolean);
+  var endsAt = times.length ? Math.min.apply(null, times) : null;
   if (!endsAt) return;
   var delay = Math.max(0, endsAt - Date.now()) + 150;
   tickTimeout = setTimeout(function() {
@@ -1554,10 +1600,10 @@ function renderOnline() {
     showChoiceUi(null, null, false, "", null);
   } else {
     if (online.pending && myTurn) disablePlayButtons(true);
-    showChoiceUi(online.pending, online.actEndsAt, myTurn, online.pileTop ? label(online.pileTop) : "", function() {
-      if (roomCode) api("tick", { code: roomCode }).catch(function() {});
-    });
+    showChoiceUi(online.pending, null, myTurn, online.pileTop ? label(online.pileTop) : "", null);
   }
+  var turnActive = !memorizing && myTurn && online.phase !== "keepBoth" && online.phase !== "peekReveal" && online.phase !== "reveal";
+  showTurnClock(online.turnEndsAt, turnActive, expireOnlineTurn);
 }
 
 function doDraw() { if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
@@ -1578,6 +1624,7 @@ function returnToSetup() {
   cancelDrag();
   stopMemorizeTicker();
   stopActTicker();
+  stopTurnTicker();
   clearKeepBothTimer();
   clearPeekTimer();
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -1592,10 +1639,26 @@ function returnToSetup() {
   var setup = document.getElementById("setup");
   if (table) table.style.display = "none";
   if (setup) setup.style.display = "block";
+  var seats = document.getElementById("seats");
+  if (seats) seats.innerHTML = "";
+  var center = document.getElementById("center");
+  if (center) center.innerHTML = "";
+  var who = document.getElementById("who");
+  if (who) who.textContent = "";
   var invite = document.getElementById("inviteBox");
   if (invite) invite.style.display = "none";
+  var lobby = document.getElementById("lobby");
+  if (lobby) lobby.textContent = "";
+  var inviteCode = document.getElementById("inviteCode");
+  if (inviteCode) inviteCode.textContent = "";
+  var inviteLink = document.getElementById("inviteLink");
+  if (inviteLink) inviteLink.innerHTML = "";
+  var bar = document.getElementById("confirmBar");
+  if (bar) bar.className = "";
   setMemorizeBar(false);
   err("");
+  if (window.history && window.history.replaceState) window.history.replaceState(null, "", window.location.pathname);
+  if (setup && setup.scrollIntoView) setup.scrollIntoView();
 }
 function doQuit() {
   var code = roomCode, seat = mySeat, token = seatToken, wasOnline = mode === "online" && roomCode && mySeat !== null && seatToken;
@@ -1636,6 +1699,7 @@ function doReady() {
 function doRedeal() {
   stopMemorizeTicker();
   stopActTicker();
+  stopTurnTicker();
   cancelDrag();
   if (mode === "online") sendAction({ action: "redeal" });
   else if (G) deal(G.n);
@@ -1910,8 +1974,11 @@ function render() {
     seat.appendChild(grid);
     seats.appendChild(seat);
   }
-  if (memorizing) showChoiceUi(null, null, false, "", null);
-  else showChoiceUi(G.pending, G.actEndsAt, !cpu(), pileTop() ? label(pileTop()) : "", expireLocalAct);
+  if (memorizing) {
+    showChoiceUi(null, null, false, "", null);
+    showTurnClock(null, false, null);
+  } else showChoiceUi(G.pending, null, !cpu(), pileTop() ? label(pileTop()) : "", null);
+  syncLocalTurnClock();
 }
 function cardEl(c, known, pick, flash) {
   var el = document.createElement("button");
@@ -1939,9 +2006,9 @@ function drawCard() {
     G.phase = "act";
     G.pick = [];
     G.pending = null;
-    G.actEndsAt = Date.now() + ACT_MS;
+    G.actEndsAt = null;
     addDumpPicks(G.turn);
-    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to confirm — if time runs out you keep this card.");
+    say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you keep the center card.");
     render();
   } catch (e) { err(e.message); }
 }
@@ -1982,12 +2049,6 @@ function clearDecisionTimer() {
   G.actEndsAt = null;
   G.pending = null;
 }
-function decisionTimerOpen() {
-  if (!G || G.actEndsAt == null) return false;
-  if (G.phase === "act" || G.phase === "draw") return true;
-  if (G.phase === "pick" && (G.intent === "swap" || G.intent === "claim" || G.intent === "discard")) return true;
-  return false;
-}
 function choiceLegal(choice) {
   if (!G || cpu()) return false;
   if ((choice === "pass" || choice === "swap") && G.phase === "act" && pileTop()) return true;
@@ -2000,7 +2061,6 @@ function requestChoice(choice) {
     return;
   }
   if (!choiceLegal(choice)) return;
-  if (choice === "claim" && !G.actEndsAt) G.actEndsAt = Date.now() + ACT_MS;
   G.pending = choice;
   say(choiceVerb(choice) + " " + label(pileTop()) + "? Yes to confirm, No to choose again.");
   render();
@@ -2020,17 +2080,60 @@ function cancelChoice() {
   say("Cancelled. Choose Pick, Pass, or Swap again.");
   render();
 }
-function expireLocalAct() {
-  if (!G || mode !== "local" || G.actEndsAt == null || Date.now() < G.actEndsAt) return;
-  if (!decisionTimerOpen()) { clearDecisionTimer(); render(); return; }
-  forceKeepDrawn();
+function localTurnWaiting() {
+  if (!G || G.pending) return false;
+  return G.phase === "draw" || G.phase === "act" || G.phase === "pick" || G.phase === "chain" || G.phase === "power" || G.phase === "dumpGive";
 }
-function forceKeepDrawn() {
-  var drawn = pileTop();
-  var pid = G.turn;
-  clearDecisionTimer();
+function localTurnKey() {
+  return [G.turn, G.phase, G.powerStep || "", G.intent || "", G.chainRank || ""].join("|");
+}
+var syncingTurn = false;
+function syncLocalTurnClock() {
+  if (!G || mode !== "local" || syncingTurn) return;
+  var deciding = G.pending || localTurnWaiting();
+  if (deciding && G.turnEndsAt == null && G.actEndsAt != null) {
+    G.turnEndsAt = G.actEndsAt;
+    if (!G.turnWaitKey) G.turnWaitKey = localTurnKey();
+  }
+  if (deciding && G.turnEndsAt != null) G.actEndsAt = null;
+  if (G.pending) {
+    if (G.turnEndsAt != null && Date.now() >= G.turnEndsAt) {
+      syncingTurn = true;
+      try { localAutoPass(); } finally { syncingTurn = false; }
+      syncLocalTurnClock();
+      return;
+    }
+    showTurnClock(G.turnEndsAt, G.turn === 0, expireLocalTurn);
+    return;
+  }
+  if (!localTurnWaiting()) {
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
+    showTurnClock(null, false, null);
+    return;
+  }
+  var key = localTurnKey();
+  if (!(G.turnEndsAt != null && G.turnWaitKey === key)) {
+    G.turnWaitKey = key;
+    G.turnEndsAt = Date.now() + ACT_MS;
+  }
+  if (Date.now() >= G.turnEndsAt) {
+    syncingTurn = true;
+    try { localAutoPass(); } finally { syncingTurn = false; }
+    syncLocalTurnClock();
+    return;
+  }
+  showTurnClock(G.turnEndsAt, G.turn === 0, expireLocalTurn);
+}
+function expireLocalTurn() {
+  if (!G || mode !== "local" || G.turnEndsAt == null || Date.now() < G.turnEndsAt) return;
+  localAutoPass();
+}
+function clearMoveState() {
   G.intent = null;
   G.pick = [];
+  G.pending = null;
+  G.actEndsAt = null;
   G.chainPid = null;
   G.chainRank = null;
   G.chainSkipFree = null;
@@ -2039,17 +2142,17 @@ function forceKeepDrawn() {
   G.powerStep = null;
   G.powerTarget = null;
   G.powerMine = null;
-  if (!drawn) {
-    G.free = false;
-    say("Time's up.");
-    finish();
-    return;
-  }
+}
+function keepCenterCard() {
+  var drawn = pileTop();
+  if (!drawn) return;
+  var pid = G.turn;
+  clearMoveState();
   G.free = false;
-  var extra = {r:drawn.r, s:drawn.s, known:[]};
+  var extra = { r: drawn.r, s: drawn.s, known: [] };
   for (var k = 0; k < G.n; k++) extra.known.push(false);
   extra.known[pid] = true;
-  if (mode === "local" && G.n > 1) extra.known[1] = true;
+  if (G.n > 1) extra.known[1] = true;
   var placedI = placeDrawnInHand(pid, extra);
   G.pile.pop();
   G.phase = "keepBoth";
@@ -2061,6 +2164,29 @@ function forceKeepDrawn() {
     if (!G || G.phase !== "keepBoth") return;
     endKeepBothReveal();
   }, KEEP_BOTH_MS);
+}
+function localAutoPass() {
+  if (!G || (!G.pending && !localTurnWaiting())) return;
+  G.turnEndsAt = null;
+  G.turnWaitKey = null;
+  G.pending = null;
+  G.actEndsAt = null;
+  var top = pileTop();
+  if (top) return keepCenterCard();
+  if (G.phase === "draw" && !G.deck.length) return reveal();
+  clearMoveState();
+  G.free = false;
+  say("Time's up. Passed.");
+  finish();
+}
+function expireOnlineTurn() {
+  if (mode !== "online" || !roomCode) return;
+  api("tick", { code: roomCode }).then(function() {
+    if (!roomCode || mySeat === null) return null;
+    return api("state", { code: roomCode, seat: mySeat, token: seatToken });
+  }).then(function(res) {
+    if (res && res.state) handleState(res.state);
+  }).catch(function() {});
 }
 function placeDrawnInHand(pid, card) {
   var slots = G.players[pid].slots;

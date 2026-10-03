@@ -50,8 +50,11 @@ export interface Game {
   chainSkipFree: boolean | null;
   // Pick / Pass / Swap waiting for Yes. Null once confirmed or cancelled.
   pending: string | null;
-  // Deadline for confirming that choice. Timeout keeps the drawn/center card.
+  // Older confirm deadline. Absorbed into the move clock so cancelling cannot stall.
   actEndsAt: number | null;
+  // Deadline for the current move, including Yes/No. Timeout keeps a center card.
+  turnEndsAt?: number | null;
+  turnWaitKey?: string | null;
   memorizeReady: boolean[] | null;
   memorizeEndsAt: number | null;
   // These live on the saved game. The room copies are lost when a tick reloads from the database.
@@ -241,51 +244,11 @@ function clearDecisionTimer(G: Game): void {
   G.pending = null;
 }
 
-function decisionTimerOpen(G: Game): boolean {
-  if (G.actEndsAt == null) return false;
-  if (G.phase === "act" || G.phase === "draw") return true;
-  if (G.phase === "pick" && (G.intent === "swap" || G.intent === "claim" || G.intent === "discard")) return true;
-  return false;
-}
-
 function choiceVerb(choice: string): string {
   if (choice === "pass") return "Pass";
   if (choice === "swap") return "Swap in";
   if (choice === "claim") return "Pick";
   return "Choose";
-}
-
-// Timeout: take the center/drawn card into hand. Not a Pass.
-function forceKeepDrawn(room: Room, now = Date.now()): void {
-  const G = room.G!;
-  const drawn = pileTop(G);
-  const pid = G.turn;
-  clearDecisionTimer(G);
-  G.intent = null;
-  G.pick = [];
-  G.chainPid = null;
-  G.chainRank = null;
-  G.chainSkipFree = null;
-  G.dumpGive = null;
-  G.power = null;
-  G.powerStep = null;
-  G.powerTarget = null;
-  G.powerMine = null;
-  if (!drawn) {
-    G.free = false;
-    G.log = "Time's up.";
-    finish(room);
-    return;
-  }
-  G.free = false;
-  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
-  extra.known[pid] = true;
-  const placedI = placeDrawnInHand(G, pid, extra);
-  G.pile.pop();
-  G.phase = "keepBoth";
-  G.keepBoth = { pid, handI: placedI, placedI, priorHandKnown: false };
-  G.log = "Time's up. You keep " + label(drawn) + " — remember where it is.";
-  writeKeepBothDeadline(room, now + KEEP_BOTH_MS);
 }
 
 function score(p: Player): number {
@@ -335,6 +298,8 @@ export function makeDeal(n: number, cardsN: number): Game {
     chainSkipFree: null,
     pending: null,
     actEndsAt: null,
+    turnEndsAt: null,
+    turnWaitKey: null,
     memorizeReady: Array(n).fill(false),
     memorizeEndsAt: Date.now() + MEMORIZE_MS,
     keepBothEndsAt: null,
@@ -396,6 +361,7 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
         : null,
     pending: G.pending || null,
     actEndsAt: G.actEndsAt || null,
+    turnEndsAt: G.turnEndsAt || null,
     phaseEndsAt:
       G.phase === "keepBoth"
         ? G.keepBothEndsAt ?? room.keepBothEndsAt ?? null
@@ -545,35 +511,146 @@ export function endKeepBothReveal(room: Room): void {
   finish(room);
 }
 
+function turnWaiting(G: Game): boolean {
+  if (G.pending) return false;
+  return (
+    G.phase === "draw" ||
+    G.phase === "act" ||
+    G.phase === "pick" ||
+    G.phase === "chain" ||
+    G.phase === "power" ||
+    G.phase === "dumpGive"
+  );
+}
+
+function turnWaitKey(G: Game): string {
+  return [G.turn, G.phase, G.powerStep || "", G.intent || "", G.chainRank || ""].join("|");
+}
+
+// Start a fresh 30s move clock when the decision in front of the player changes.
+// Yes/No is the same decision: the deadline keeps running, and cancelling does not refresh it.
+function syncTurnClock(room: Room, now = Date.now()): void {
+  const G = room.G;
+  if (!G) return;
+  if (room.status !== "playing") {
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
+    return;
+  }
+  const deciding = !!G.pending || turnWaiting(G);
+  if (deciding && G.turnEndsAt == null && G.actEndsAt != null) {
+    G.turnEndsAt = G.actEndsAt;
+    if (G.turnWaitKey == null) G.turnWaitKey = turnWaitKey(G);
+  }
+  if (deciding && G.turnEndsAt != null) G.actEndsAt = null;
+  if (G.pending) return;
+  if (!turnWaiting(G)) {
+    G.turnEndsAt = null;
+    G.turnWaitKey = null;
+    return;
+  }
+  const key = turnWaitKey(G);
+  if (G.turnEndsAt != null && (G.turnWaitKey === key || G.turnWaitKey == null)) {
+    if (G.turnWaitKey == null) G.turnWaitKey = key;
+    return;
+  }
+  G.turnWaitKey = key;
+  G.turnEndsAt = now + ACT_MS;
+}
+
+function clearMoveState(G: Game): void {
+  G.intent = null;
+  G.pick = [];
+  G.pending = null;
+  G.actEndsAt = null;
+  G.chainPid = null;
+  G.chainRank = null;
+  G.chainSkipFree = null;
+  G.dumpGive = null;
+  G.power = null;
+  G.powerStep = null;
+  G.powerTarget = null;
+  G.powerMine = null;
+}
+
+// Take the center card into the current player's hand. The keep-both flash ends the turn.
+function keepCenterCard(room: Room, now = Date.now()): void {
+  const G = room.G!;
+  const drawn = pileTop(G);
+  if (!drawn) return;
+  const pid = G.turn;
+  clearMoveState(G);
+  G.free = false;
+  const extra: Card = { r: drawn.r, s: drawn.s, known: Array(G.n).fill(false) };
+  extra.known[pid] = true;
+  const placedI = placeDrawnInHand(G, pid, extra);
+  G.pile.pop();
+  G.phase = "keepBoth";
+  G.keepBoth = { pid, handI: placedI, placedI, priorHandKnown: false };
+  G.log = "Time's up. You keep " + label(drawn) + " — remember where it is.";
+  writeKeepBothDeadline(room, now + KEEP_BOTH_MS);
+}
+
+// The move clock ran out. A center card is taken and the turn ends. With no center card, the turn still advances.
+function autoPass(room: Room, now = Date.now()): void {
+  const G = room.G!;
+  G.turnEndsAt = null;
+  G.turnWaitKey = null;
+  G.pending = null;
+  G.actEndsAt = null;
+  const top = pileTop(G);
+  if (top) return keepCenterCard(room, now);
+  if (G.phase === "draw" && !G.deck.length) return reveal(room);
+  clearMoveState(G);
+  G.free = false;
+  G.log = "Time's up. Passed.";
+  return finish(room);
+}
+
 // Advance any expired deadline timers. Returns true if anything changed.
 export function applyTimers(room: Room, now = Date.now()): boolean {
   const G = room.G;
   if (!G || room.status !== "playing") return false;
+  let changed = false;
   if (G.phase === "memorize" && G.memorizeEndsAt != null && now >= G.memorizeEndsAt) {
     endMemorize(room);
-    return true;
-  }
-  if (G.phase === "keepBoth") {
+    changed = true;
+  } else if (G.phase === "keepBoth") {
     // A missing deadline is a room reloaded before the timestamp was saved. Finish it.
     const ends = G.keepBothEndsAt ?? room.keepBothEndsAt;
     if (ends == null || now >= ends) {
       endKeepBothReveal(room);
-      return true;
+      changed = true;
     }
-  }
-  if (G.phase === "peekReveal") {
+  } else if (G.phase === "peekReveal") {
     const ends = G.peekEndsAt ?? room.peekEndsAt;
     if (ends == null || now >= ends) {
       endPeekReveal(room);
-      return true;
+      changed = true;
     }
+  } else if (
+    (G.pending || turnWaiting(G)) &&
+    ((G.turnEndsAt != null && now >= G.turnEndsAt) ||
+      (G.turnEndsAt == null && G.actEndsAt != null && now >= G.actEndsAt))
+  ) {
+    // Yes/No uses the same deadline. Timing out keeps a center card and ends the turn.
+    autoPass(room, now);
+    changed = true;
+  } else if (G.actEndsAt != null && now >= G.actEndsAt) {
+    G.actEndsAt = null;
+    changed = true;
   }
-  if (G.actEndsAt != null && now >= G.actEndsAt) {
-    if (decisionTimerOpen(G)) forceKeepDrawn(room, now);
-    else clearDecisionTimer(G);
-    return true;
-  }
-  return false;
+  const prevEnd = G.turnEndsAt ?? null;
+  const prevKey = G.turnWaitKey ?? null;
+  const prevAct = G.actEndsAt ?? null;
+  syncTurnClock(room, now);
+  if (
+    (G.turnEndsAt ?? null) !== prevEnd ||
+    (G.turnWaitKey ?? null) !== prevKey ||
+    (G.actEndsAt ?? null) !== prevAct
+  )
+    changed = true;
+  return changed;
 }
 
 function wrongDiscardKeepBoth(room: Room, pid: number, slotI: number): void {
@@ -978,6 +1055,24 @@ function handleDrag(room: Room, pid: number, msg: { action: string; [k: string]:
 }
 
 export function handleAction(room: Room, pid: number, msg: { action: string; [k: string]: unknown }): boolean | void {
+  const result = runHandleAction(room, pid, msg);
+  const now = Date.now();
+  syncTurnClock(room, now);
+  const G = room.G;
+  if (
+    G &&
+    room.status === "playing" &&
+    G.turnEndsAt != null &&
+    now >= G.turnEndsAt &&
+    (G.pending || turnWaiting(G))
+  ) {
+    autoPass(room, now);
+    syncTurnClock(room, now);
+  }
+  return result;
+}
+
+function runHandleAction(room: Room, pid: number, msg: { action: string; [k: string]: unknown }): boolean | void {
   const G = room.G;
   const act = msg.action;
 
@@ -1036,14 +1131,14 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
     G.phase = "act";
     G.pick = [];
     G.pending = null;
-    G.actEndsAt = Date.now() + ACT_MS;
+    G.actEndsAt = null;
     addDumpPicks(G, pid);
     G.log =
       "Drew " +
       label(card) +
       ". " +
       (isPowerRank(card.r) ? powerHint(card.r) + " " : "") +
-      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to confirm — if time runs out you keep this card.";
+      "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you keep the center card.";
     return;
   }
 
@@ -1055,7 +1150,6 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
       G.pending = choice;
     } else if (choice === "claim" && G.phase === "draw" && G.free && top) {
       G.pending = choice;
-      if (G.actEndsAt == null) G.actEndsAt = Date.now() + ACT_MS;
     } else return;
     G.log = choiceVerb(choice) + " " + label(top!) + "? Yes to confirm, No to choose again.";
     return;
@@ -1093,7 +1187,6 @@ export function handleAction(room: Room, pid: number, msg: { action: string; [k:
     }
     if (choice === "claim") {
       if (!(G.phase === "draw" && G.free && top)) return;
-      if (G.actEndsAt == null) G.actEndsAt = Date.now() + ACT_MS;
       G.intent = "claim";
       G.phase = "pick";
       G.pick = [];
