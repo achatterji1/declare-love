@@ -23,11 +23,15 @@ export const Route = createFileRoute("/api/public/declare/action")({
         const { code, seat, token, action, ...rest } = parsed.data;
 
         try {
-          const { room } = await mutateRoom(code.toUpperCase(), (r) => {
+          const { room, result } = await mutateRoom(code.toUpperCase(), (r) => {
             if (!seatAuthorized(r, seat, token)) throw new Error("unauthorized");
-            handleAction(r, seat, { action, ...rest });
+            return handleAction(r, seat, { action, ...rest });
           });
-          return Response.json({ state: publicState(room, seat) });
+          const body: { state: ReturnType<typeof publicState>; applied?: boolean } = {
+            state: publicState(room, seat),
+          };
+          if (action === "drag") body.applied = result === true;
+          return Response.json(body);
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Action failed.";
           if (msg === "unauthorized") return Response.json({ error: msg }, { status: 401 });

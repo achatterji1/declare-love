@@ -7,7 +7,7 @@
     "dev": "vite dev --port 8080",
     "build": "vite build && node scripts/patch-dist.mjs && node scripts/ensure-dist-index.mjs",
     "build:dev": "vite build && node scripts/patch-dist.mjs && node scripts/ensure-dist-index.mjs",
-    "test": "node --check local-node/server.js",
+    "test": "node --check local-node/server.js && node --experimental-strip-types test/drag-rules.mjs",
     "start:local": "node local-node/server.js"
   },
   "dependencies": {
