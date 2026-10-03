@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { makeDeal, handleAction, publicState, endKeepBothReveal } from "../src/lib/declare-engine.ts";
+import { makeDeal, handleAction, publicState, endKeepBothReveal, applyTimers } from "../src/lib/declare-engine.ts";
 
 function roomWith(G) {
   return {
@@ -206,6 +206,116 @@ function testRedealAfterReveal() {
   assert.equal(mid.status, "playing");
 }
 
+function persisted(room) {
+  const G = JSON.parse(JSON.stringify(room.G));
+  const next = roomWith(G);
+  next.status = room.status;
+  return next;
+}
+
+function testOnlineKeepBothFinishesAfterReload() {
+  const room = base();
+  const started = Date.now();
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.phase, "keepBoth");
+  assert.ok(room.G.keepBothEndsAt > started);
+  assert.equal(publicState(room, 1).phaseEndsAt, room.G.keepBothEndsAt);
+  const loaded = persisted(room);
+  assert.equal(loaded.keepBothEndsAt, null, "database reload drops the in-memory room deadline");
+  assert.equal(applyTimers(loaded, room.G.keepBothEndsAt - 1), false);
+  assert.equal(loaded.G.phase, "keepBoth");
+  assert.equal(applyTimers(loaded, room.G.keepBothEndsAt), true);
+  assert.equal(loaded.G.phase, "draw");
+  assert.equal(loaded.G.turn, 1);
+  assert.equal(publicState(loaded, 0).keepBoth, null);
+
+  const dump = base();
+  dump.G.pile = [{ r: "7", s: "D" }];
+  dump.G.players[1].slots[0] = card("K", "S");
+  handleAction(dump, 0, { action: "drag", gesture: "dump", p: 1, i: 0 });
+  const reloadedDump = persisted(dump);
+  assert.equal(reloadedDump.G.phase, "keepBoth");
+  assert.equal(applyTimers(reloadedDump, dump.G.keepBothEndsAt), true);
+  assert.equal(reloadedDump.G.turn, 1);
+  assert.notEqual(reloadedDump.G.phase, "keepBoth");
+}
+
+function testStuckRevealPhasesEnd() {
+  const keep = base();
+  keep.G.phase = "keepBoth";
+  keep.G.keepBoth = { pid: 0, handI: 0, placedI: 1, priorHandKnown: true };
+  delete keep.G.keepBothEndsAt;
+  assert.equal(applyTimers(keep), true);
+  assert.equal(keep.G.phase, "draw");
+  assert.equal(keep.G.turn, 1);
+
+  const peek = base();
+  peek.G.phase = "peekReveal";
+  peek.G.peekReveal = { peeker: 0, targetPid: 1, i: 0, next: "finish", priorKnown: false };
+  delete peek.G.peekEndsAt;
+  assert.equal(applyTimers(peek), true);
+  assert.notEqual(peek.G.phase, "peekReveal");
+  assert.equal(peek.G.turn, 1);
+}
+
+function testOnlinePeekFinishesAfterReload() {
+  const room = base();
+  room.G.pile = [{ r: "J", s: "H" }];
+  handleAction(room, 0, { action: "power" });
+  assert.equal(room.G.phase, "power");
+  assert.equal(handleAction(room, 0, { action: "card", p: 1, i: 0 }), undefined);
+  assert.equal(room.G.phase, "peekReveal");
+  assert.ok(room.G.peekEndsAt);
+  assert.equal(publicState(room, 0).phaseEndsAt, room.G.peekEndsAt);
+  const loaded = persisted(room);
+  assert.equal(loaded.peekEndsAt, null);
+  assert.equal(applyTimers(loaded, room.G.peekEndsAt - 1), false);
+  assert.equal(loaded.G.phase, "peekReveal");
+  assert.equal(applyTimers(loaded, room.G.peekEndsAt + 1), true);
+  assert.equal(loaded.G.phase, "draw");
+  assert.equal(loaded.G.turn, 1);
+
+  const ten = base();
+  ten.G.pile = [{ r: "10", s: "C" }];
+  handleAction(ten, 0, { action: "power" });
+  handleAction(ten, 0, { action: "card", p: 0, i: 0 });
+  assert.equal(ten.G.phase, "peekReveal");
+  const loadedTen = persisted(ten);
+  assert.equal(applyTimers(loadedTen, ten.G.peekEndsAt + 1), true);
+  assert.notEqual(loadedTen.G.phase, "peekReveal");
+}
+
+function testChainTargetsAreMatchesOnly() {
+  const room = base();
+  room.G.pile = [{ r: "A", s: "D" }];
+  room.G.players[0].slots[2] = card("Q", "C");
+  room.G.players[0].slots[3] = card("Q", "S");
+  room.G.players[1].slots[0] = card("K", "H");
+  room.G.players[1].slots[1] = card("Q", "D");
+  handleAction(room, 0, { action: "drag", gesture: "swap", p: 0, i: 3 });
+  assert.equal(room.G.phase, "chain");
+  const pick = room.G.pick.slice().sort();
+  assert.ok(pick.includes("0:2"), "own remaining queen stays a discard target");
+  assert.ok(pick.includes("1:1"), "matching opponent queen is a dump target");
+  assert.equal(pick.includes("1:0"), false, "non-matching opponent card is not a drop target");
+  assert.deepEqual(publicState(room, 0).pick, room.G.pick);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "dump", p: 1, i: 0 }), false);
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.players[1].slots[0].r, "K");
+}
+
+function testRejectedDragIsNotApplied() {
+  const room = base();
+  room.G.phase = "draw";
+  room.G.free = false;
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "swap", p: 0, i: 0 }), false);
+  room.G.phase = "keepBoth";
+  room.G.keepBoth = { pid: 0, handI: 0, placedI: 1, priorHandKnown: false };
+  room.G.keepBothEndsAt = Date.now() + 4000;
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.phase, "keepBoth");
+}
+
 function testQuitDismissesTable() {
   const room = base();
   handleAction(room, 0, { action: "quit" });
@@ -224,4 +334,9 @@ testIllegalDragNoChange();
 testChainDumpDoesNotTakeCenter();
 testRedealAfterReveal();
 testQuitDismissesTable();
+testOnlineKeepBothFinishesAfterReload();
+testStuckRevealPhasesEnd();
+testOnlinePeekFinishesAfterReload();
+testChainTargetsAreMatchesOnly();
+testRejectedDragIsNotApplied();
 console.log("drag rules ok");

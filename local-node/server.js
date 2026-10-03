@@ -85,7 +85,7 @@ function beginChain(room, pid, rank, allowOne, opts) {
   G.players[pid].slots.forEach((c, i) => {
     if (c && c.r === rank) G.pick.push(pid + ":" + i);
   });
-  addDumpPicks(G, pid);
+  addChainOppPicks(G, pid, rank);
   if (keepCenter) {
     G.free = false;
     G.chainSkipFree = false;
@@ -133,11 +133,22 @@ function matchRankForDump(G) {
 function addDumpPicks(G, actor) {
   const rank = matchRankForDump(G);
   if (!rank || actor == null) return;
-  // Opponent cards are dump targets (except locked declarer): match = success, wrong = keep-both
+  // During an open dump, every unlocked opponent card is legal: a match succeeds, a miss keeps both.
   for (let p = 0; p < G.n; p++) {
     if (p === actor || handLocked(G, p)) continue;
     G.players[p].slots.forEach((c, i) => {
       if (c) {
+        const key = p + ":" + i;
+        if (G.pick.indexOf(key) < 0) G.pick.push(key);
+      }
+    });
+  }
+}
+function addChainOppPicks(G, actor, rank) {
+  for (let p = 0; p < G.n; p++) {
+    if (p === actor || handLocked(G, p)) continue;
+    G.players[p].slots.forEach((c, i) => {
+      if (c && c.r === rank) {
         const key = p + ":" + i;
         if (G.pick.indexOf(key) < 0) G.pick.push(key);
       }

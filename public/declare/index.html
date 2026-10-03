@@ -907,13 +907,17 @@ function joinInvite() {
 }
 
 function sendAction(payload) {
-  if (mode !== "online" || !roomCode || mySeat === null) return;
+  if (mode !== "online" || !roomCode || mySeat === null) return Promise.resolve(null);
   payload.code = roomCode;
   payload.seat = mySeat;
   payload.token = seatToken;
-  api("action", payload).then(function(res) {
+  return api("action", payload).then(function(res) {
     handleState(res.state);
-  }).catch(function(e) { err(e.message); });
+    return res;
+  }).catch(function(e) {
+    err(e.message);
+    return null;
+  });
 }
 
 function playCtx() {
@@ -998,6 +1002,18 @@ function dumpWindow(c) {
   if (c.phase === "pick" && c.intent === "discard") return true;
   return false;
 }
+function chainOppTargets(c) {
+  var out = [];
+  var pick = c.pick || [];
+  for (var k = 0; k < pick.length; k++) {
+    var bits = String(pick[k]).split(":");
+    var p = Number(bits[0]);
+    var i = Number(bits[1]);
+    if (p === c.you || lockedSeat(c, p)) continue;
+    if (occupied(c, p, i)) out.push({ zone: "hand", p: p, i: i });
+  }
+  return out;
+}
 function legalMovesFrom(source) {
   var c = playCtx();
   if (!c || !c.myTurn || !source || c.pending) return [];
@@ -1009,7 +1025,7 @@ function legalMovesFrom(source) {
     if (c.phase === "act" && own.length) moves.push({ gesture: "swap", targets: own });
     if (c.phase === "draw" && c.free && own.length) moves.push({ gesture: "claim", targets: own });
     if (dumpWindow(c)) {
-      var opps = oppTargets(c);
+      var opps = c.phase === "chain" ? chainOppTargets(c) : oppTargets(c);
       if (opps.length) moves.push({ gesture: "dump", targets: opps });
     }
   }
@@ -1286,11 +1302,14 @@ function onDragUp(ev) {
     return;
   }
   setTimeout(function() {
-    var ok = performDrag(move, session.spec, target);
-    if (!ok) snapGhost(session);
-    else if (session.ghost && session.ghost.parentNode) session.ghost.parentNode.removeChild(session.ghost);
-    suppressClick = false;
-    flushQueuedRender();
+    var pending = performDrag(move, session.spec, target);
+    var settle = pending && typeof pending.then === "function" ? pending : Promise.resolve(!!pending);
+    settle.then(function(ok) {
+      if (!ok) snapGhost(session);
+      else if (session.ghost && session.ghost.parentNode) session.ghost.parentNode.removeChild(session.ghost);
+      suppressClick = false;
+      flushQueuedRender();
+    });
   }, 0);
 }
 function onDragCancel(ev) {
@@ -1344,8 +1363,9 @@ function performDrag(move, source, target) {
     payload.p = source.p; payload.i = source.i; payload.tp = target.p; payload.ti = target.i;
   }
   if (mode === "online") {
-    sendAction({ action: "drag", gesture: payload.gesture, p: payload.p, i: payload.i, tp: payload.tp, ti: payload.ti });
-    return true;
+    return sendAction({ action: "drag", gesture: payload.gesture, p: payload.p, i: payload.i, tp: payload.tp, ti: payload.ti }).then(function(res) {
+      return !!(res && res.applied);
+    });
   }
   return applyLocalDrag(payload);
 }
@@ -1703,13 +1723,27 @@ function matchRankForDump() {
 function addDumpPicks(actor) {
   var rank = matchRankForDump();
   if (!rank || actor == null) return;
-  // Opponent cards are dump targets (except locked declarer): match = success, wrong = take theirs + keep center
+  // During an open dump, every unlocked opponent card is legal: a match succeeds, a miss keeps both.
   for (var p = 0; p < G.n; p++) {
     if (p === actor || handLocked(p)) continue;
     var slots = G.players[p].slots;
     for (var i = 0; i < slots.length; i++) {
       var c = slots[i];
       if (c) {
+        var key = p + ":" + i;
+        if (G.pick.indexOf(key) < 0) G.pick.push(key);
+      }
+    }
+  }
+}
+function addChainOppPicks(actor, rank) {
+  if (actor == null || !rank) return;
+  for (var p = 0; p < G.n; p++) {
+    if (p === actor || handLocked(p)) continue;
+    var slots = G.players[p].slots;
+    for (var i = 0; i < slots.length; i++) {
+      var c = slots[i];
+      if (c && c.r === rank) {
         var key = p + ":" + i;
         if (G.pick.indexOf(key) < 0) G.pick.push(key);
       }
@@ -2258,7 +2292,7 @@ function beginChain(pid, rank, allowOne, opts) {
     var c = G.players[pid].slots[i];
     if (c && c.r === rank) G.pick.push(pid + ":" + i);
   }
-  addDumpPicks(pid);
+  addChainOppPicks(pid, rank);
   if (keepCenter) {
     G.free = false;
     G.chainSkipFree = false;
