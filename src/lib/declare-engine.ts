@@ -232,7 +232,7 @@ export function leaveSeat(room: Room, seat: number): void {
     }
     const G = room.G;
     if (G?.dumpGive && G.dumpGive.actor === seat) {
-      const giveI = G.players[seat].slots.findIndex((card) => card && isFaceDown(card));
+      const giveI = G.players[seat].slots.findIndex((card) => card && isFaceDownFor(card, seat));
       if (giveI >= 0) completeDumpGive(room, giveI);
     }
     room.seats[seat] = null;
@@ -276,8 +276,8 @@ export function hasSeen(card: Card, pid: number): boolean {
   return !!card.known[pid] || !!(card.seen && card.seen[pid]);
 }
 
-function isFaceDown(card: Card): boolean {
-  return card.known.every((flag) => !flag);
+function isFaceDownFor(card: Card, pid: number): boolean {
+  return !card.known[pid];
 }
 
 export function makeCode(): string {
@@ -592,7 +592,10 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     pileCount: G.pile.length,
     pileTop: top ? { r: top.r, s: top.s } : null,
     pileUnder: G.pile.length > 1 ? { r: G.pile[G.pile.length - 2].r, s: G.pile[G.pile.length - 2].s } : null,
-    wiggle: G.wiggle && G.wiggle.until > Date.now() ? { pid: G.wiggle.pid, i: G.wiggle.i, until: G.wiggle.until } : null,
+    wiggle:
+      G.wiggle && Date.now() < G.wiggle.until + WIGGLE_MS
+        ? { pid: G.wiggle.pid, i: G.wiggle.i, until: G.wiggle.until }
+        : null,
     players: G.players.map((p) => ({
       id: p.id,
       name: room.seats[p.id] ? (room.seats[p.id]?.computer ? "Computer" : p.name) : "Open",
@@ -1060,7 +1063,7 @@ function startDumpGive(room: Room, actor: number, oppPid: number, emptiedI: numb
   G.intent = null;
   G.pick = [];
   G.players[actor].slots.forEach((c, i) => {
-    if (c && isFaceDown(c)) G.pick.push(actor + ":" + i);
+    if (c && isFaceDownFor(c, actor)) G.pick.push(actor + ":" + i);
   });
   // keep G.free (dump already set true) so next player can Pick after turn
   G.log = "Give them a face-down card — drag one of yours to " + G.players[oppPid].name + ".";
@@ -1086,7 +1089,7 @@ function completeDumpGive(room: Room, giveI: number, now = Date.now()): boolean 
   if (!dg) return false;
   const actor = dg.actor;
   const card = G.players[actor].slots[giveI];
-  if (!card || !isFaceDown(card)) return false;
+  if (!card || !isFaceDownFor(card, actor)) return false;
   G.players[actor].slots[giveI] = null;
   // A dumped/given card is face-down for everyone in its destination slot.
   conceal(card);
@@ -1116,7 +1119,7 @@ function autoGiveOffTurn(room: Room, now: number): void {
   const G = room.G!;
   const dg = G.dumpGive;
   if (!dg) return;
-  const giveI = G.players[dg.actor].slots.findIndex((c) => c && isFaceDown(c));
+  const giveI = G.players[dg.actor].slots.findIndex((c) => c && isFaceDownFor(c, dg.actor));
   if (giveI < 0) {
     G.log = "No card left to give.";
     if (dg.resumePhase === "act" || dg.resumePhase === "chain") {
@@ -1131,7 +1134,7 @@ function autoGiveOffTurn(room: Room, now: number): void {
 }
 
 function offTurnWindow(G: Game): boolean {
-  if (G.n !== 4 || G.pending) return false;
+  if (G.pending) return false;
   if (G.phase === "act" || G.phase === "chain") return !!pileTop(G);
   if (G.phase === "draw" && G.free) return !!pileTop(G);
   return false;
@@ -1140,14 +1143,14 @@ function offTurnWindow(G: Game): boolean {
 export function humanCanOffTurnDump(room: Room): boolean {
   const G = room.G;
   if (!G || !offTurnWindow(G)) return false;
-  const top = pileTop(G);
-  if (!top) return false;
+  const rank = matchRankForDump(G);
+  if (!rank) return false;
   for (let actor = 0; actor < G.n; actor++) {
     if (actor === G.turn || room.seats[actor]?.computer) continue;
-    if (!G.players[actor].slots.some((c) => c && isFaceDown(c))) continue;
+    if (!G.players[actor].slots.some((c) => c && isFaceDownFor(c, actor))) continue;
     for (let p = 0; p < G.n; p++) {
       if (p === actor || handLocked(G, p)) continue;
-      if (G.players[p].slots.some((c) => c && c.r === top.r && hasSeen(c, actor))) return true;
+      if (G.players[p].slots.some((c) => c && c.r === rank && hasSeen(c, actor))) return true;
     }
   }
   return false;
@@ -1163,22 +1166,22 @@ function offTurnKnownDump(room: Room, actor: number, oppPid: number, i: number, 
   if (handLocked(G, oppPid)) return false;
   const card = G.players[oppPid] && G.players[oppPid].slots[i];
   if (!card || !hasSeen(card, actor)) return false;
-  const top = pileTop(G);
-  if (!top || card.r !== top.r) return false;
-  if (!G.players[actor].slots.some((c) => c && isFaceDown(c))) return false;
+  const rank = matchRankForDump(G);
+  if (!rank || card.r !== rank) return false;
+  if (!G.players[actor].slots.some((c) => c && isFaceDownFor(c, actor))) return false;
   const remaining = G.turnEndsAt != null ? Math.max(0, G.turnEndsAt - now) : null;
   const resumeTurnWaitKey = G.turnWaitKey ?? null;
   G.players[oppPid].slots[i] = null;
   G.pile.push(card);
   G.pick = [];
   G.players[actor].slots.forEach((c, slot) => {
-    if (c && isFaceDown(c)) G.pick.push(actor + ":" + slot);
+    if (c && isFaceDownFor(c, actor)) G.pick.push(actor + ":" + slot);
   });
   G.dumpGive = {
     actor,
     oppPid,
     emptiedI: i,
-    rank: top.r,
+    rank,
     offTurn: true,
     endsAt: now + GIVE_MS,
     resumePhase: G.phase,
@@ -1212,7 +1215,7 @@ function knownMatchDump(room: Room, actor: number, oppPid: number, i: number): b
   if (!card || !hasSeen(card, actor)) return false;
   const rank = matchRankForDump(G);
   if (!rank || card.r !== rank) return false;
-  if (!G.players[actor].slots.some((c) => c && isFaceDown(c))) return false;
+  if (!G.players[actor].slots.some((c) => c && isFaceDownFor(c, actor))) return false;
   G.players[oppPid].slots[i] = null;
   G.pile.push(card);
   G.free = true;
@@ -1237,7 +1240,7 @@ function tryDumpOpponent(room: Room, actor: number, oppPid: number, i: number): 
     wrongOppDumpKeepBoth(room, actor, oppPid, i);
     return true;
   }
-  if (!G.players[actor].slots.some((c) => c && isFaceDown(c))) {
+  if (!G.players[actor].slots.some((c) => c && isFaceDownFor(c, actor))) {
     G.log = "Need a face-down card to give them after dumping.";
     return true;
   }
