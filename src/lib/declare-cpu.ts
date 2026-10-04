@@ -64,7 +64,7 @@ export function playComputerTurns(room: Room, now = Date.now()): boolean {
     }
     if (G.phase === "dumpGive" && G.dumpGive && computerSeat(room, G.dumpGive.actor)) {
       const before = signature(room);
-      const giveI = G.players[G.dumpGive.actor].slots.findIndex((c) => !!c);
+      const giveI = G.players[G.dumpGive.actor].slots.findIndex((c) => c && !c.known[G.dumpGive.actor]);
       if (giveI >= 0) handleAction(room, G.dumpGive.actor, { action: "card", p: G.dumpGive.actor, i: giveI });
       changed = true;
       if (signature(room) === before) break;

@@ -456,7 +456,38 @@ function testOffTurnKnownMatchOnly() {
   const two = room4();
   two.n = 2;
   two.G.n = 2;
-  assert.equal(handleAction(two, 1, { action: "offDiscard", p: 0, i: 0 }), false);
+  two.G.players[0].slots[0] = card("7", "C", 2, [false, true]);
+  two.G.players[0].slots[1] = card("7", "D", 2);
+  two.G.players[1].slots = [
+    card("2", "C", 2),
+    card("5", "D", 2, [true, true]),
+    card("8", "S", 2),
+    card("J", "H", 2),
+  ];
+  two.G.players[1].slots[1].known = [true, false];
+  two.G.players[1].slots[2].known = [false, true];
+  const hiddenSeven = JSON.stringify(publicState(two, 1).players[0].slots[1]);
+  const twoLog = two.G.log;
+  assert.equal(handleAction(two, 1, { action: "drag", gesture: "offDump", p: 0, i: 1 }), false);
+  assert.equal(two.G.log, twoLog);
+  assert.equal(JSON.stringify(publicState(two, 1).players[0].slots[1]), hiddenSeven);
+  assert.equal(hiddenRank(publicState(two, 1), 0, 1), undefined);
+  assert.equal(handleAction(two, 1, { action: "drag", gesture: "offDump", p: 0, i: 0 }), true);
+  assert.equal(two.G.phase, "dumpGive");
+  assert.equal(two.G.n, 2);
+  assert.equal(two.G.dumpGive.offTurn, true);
+  assert.equal(two.G.dumpGive.actor, 1);
+  assert.equal(two.G.turn, 0);
+  assert.ok(two.G.dumpGive.endsAt - Date.now() <= GIVE_MS);
+  assert.ok(two.G.dumpGive.endsAt - Date.now() >= GIVE_MS - 1000);
+  assert.equal(handleAction(two, 0, { action: "drag", gesture: "offDump", p: 0, i: 0 }), false);
+  two.G.pick.push("1:2");
+  assert.equal(handleAction(two, 1, { action: "drag", gesture: "give", p: 1, i: 2 }), false);
+  assert.equal(two.G.players[1].slots[2].r, "8");
+  assert.equal(handleAction(two, 1, { action: "drag", gesture: "give", p: 1, i: 1 }), true);
+  assert.equal(two.G.players[0].slots[0].r, "5");
+  assert.ok(two.G.players[0].slots[0].known.every((flag) => flag === false));
+  assert.ok(two.G.players[0].slots[0].seen.every((flag) => flag === false));
 
   const legal = room4();
   const sibling = JSON.stringify(publicState(legal, 2).players[1].slots[2]);
@@ -747,6 +778,53 @@ function testSignInGatesPlay() {
   assert.equal(googleSignInEnabled(null), false);
 }
 
+function testKnownDumpRaceAndFaceDownGift() {
+  const raced = room4();
+  raced.G.players[1].slots[0].seen = [true, false, true, true];
+  const otherSeven = JSON.stringify(publicState(raced, 3).players[1].slots[1]);
+  assert.equal(handleAction(raced, 2, { action: "drag", gesture: "offDump", p: 1, i: 0 }), true);
+  assert.equal(raced.G.phase, "dumpGive");
+  assert.equal(raced.G.dumpGive.actor, 2);
+  assert.equal(raced.G.dumpGive.offTurn, true);
+  assert.ok(raced.G.dumpGive.endsAt - Date.now() <= GIVE_MS);
+  assert.ok(raced.G.dumpGive.endsAt - Date.now() > GIVE_MS - 1500);
+  assert.equal(handleAction(raced, 3, { action: "drag", gesture: "offDump", p: 1, i: 0 }), false);
+  assert.equal(handleAction(raced, 0, { action: "drag", gesture: "offDump", p: 1, i: 0 }), false);
+  assert.equal(raced.G.dumpGive.actor, 2);
+  assert.equal(raced.G.players[1].slots[0], null);
+  assert.equal(JSON.stringify(publicState(raced, 3).players[1].slots[1]), otherSeven);
+  assert.equal(hiddenRank(publicState(raced, 3), 1, 1), undefined);
+
+  const unknown = room4();
+  const hidden = JSON.stringify(publicState(unknown, 2).players[1].slots[1]);
+  const logBefore = unknown.G.log;
+  assert.equal(handleAction(unknown, 2, { action: "drag", gesture: "offDump", p: 1, i: 1 }), false);
+  assert.equal(unknown.G.phase, "act");
+  assert.equal(unknown.G.players[1].slots[1].r, "7");
+  assert.equal(unknown.G.log, logBefore);
+  assert.equal(JSON.stringify(publicState(unknown, 2).players[1].slots[1]), hidden);
+  assert.equal(hiddenRank(publicState(unknown, 2), 1, 1), undefined);
+
+  const gift = room4();
+  gift.G.players[2].slots[1].known = [true, true, true, true];
+  assert.equal(handleAction(gift, 2, { action: "drag", gesture: "offDump", p: 1, i: 0 }), true);
+  assert.equal(gift.G.pick.includes("2:1"), false);
+  gift.G.pick.push("2:1");
+  assert.equal(handleAction(gift, 2, { action: "drag", gesture: "give", p: 2, i: 1 }), false);
+  assert.equal(gift.G.phase, "dumpGive");
+  assert.equal(gift.G.players[2].slots[1].r, "5");
+  assert.equal(gift.G.players[1].slots[0], null);
+  assert.notEqual(handleAction(gift, 2, { action: "card", p: 2, i: 1 }), true);
+  assert.equal(gift.G.players[2].slots[1].r, "5");
+  assert.equal(handleAction(gift, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
+  assert.equal(gift.G.players[1].slots[0].r, "2");
+  assert.ok(gift.G.players[1].slots[0].known.every((flag) => flag === false));
+  assert.ok(gift.G.players[1].slots[0].seen.every((flag) => flag === false));
+  assert.equal(gift.G.phase, "draw");
+  assert.equal(gift.G.turn, 1);
+}
+
+testKnownDumpRaceAndFaceDownGift();
 testOffTurnKnownMatchOnly();
 testOffTurnGiveTimeoutPicksACard();
 testDrawnCardOffTurnDiscardEndsTheTurn();

@@ -172,10 +172,21 @@
     font: 700 18px/1 Georgia, serif;
     box-shadow: 0 4px 8px rgba(71,52,35,.18), inset 0 0 0 2px rgba(255,255,255,.5);
   }
-  .card:hover:not(:disabled):not(.drag-src) { transform: translateY(-2px); }
+  .card:hover:not(:disabled):not(.drag-src):not(.wiggle) { transform: translateY(-2px); }
   .card { touch-action: none; user-select: none; -webkit-user-select: none; }
   .card.can-drag { cursor: grab; }
   .card.can-drag:active { cursor: grabbing; }
+  @keyframes slot-wiggle {
+    0%, 100% { transform: translateX(0) rotate(0deg); }
+    12% { transform: translateX(-3px) rotate(-2.5deg); }
+    24% { transform: translateX(3px) rotate(2.5deg); }
+    36% { transform: translateX(-3px) rotate(-2deg); }
+    48% { transform: translateX(2px) rotate(2deg); }
+    60% { transform: translateX(-2px) rotate(-1.5deg); }
+    72% { transform: translateX(2px) rotate(1.5deg); }
+    84% { transform: translateX(-1px) rotate(-1deg); }
+  }
+  .card.wiggle { animation: slot-wiggle 2s ease-in-out 1; z-index: 2; }
   .card.drag-src { opacity: .38; }
   .card.flash {
     box-shadow: inset 0 0 0 3px var(--accent), 0 0 0 4px rgba(217,111,88,.28), 0 8px 14px rgba(71,52,35,.22);
@@ -723,6 +734,7 @@ var PEEK_MS = 1300;
 var ACT_MS = 30000;
 var turnTimerSuffix = "to move";
 var cardMemory = {};
+var wiggleSeen = {};
 var playerId = null;
 var chipWallet = null;
 var lobbyTimer = null;
@@ -1153,6 +1165,7 @@ function claimBonus() {
 }
 function enterTable(res) {
   cardMemory = {};
+  wiggleSeen = {};
   mode = "online";
   err("");
   roomCode = res.code;
@@ -1322,32 +1335,63 @@ function chainOppTargets(c) {
   return out;
 }
 function offTurnWindow(c) {
-  if (!c || c.myTurn || c.pending || c.n !== 4 || !c.pileTop) return false;
+  if (!c || c.myTurn || c.pending || !c.pileTop) return false;
   if (c.phase === "act" || c.phase === "chain") return true;
   if (c.phase === "draw" && c.free) return true;
   return false;
 }
 function rememberedFace(slot, owner, you, n) {
-  if (!slot || slot.known || !slot.id || n !== 4 || owner === you) return null;
+  if (!slot || slot.known || !slot.id || owner === you) return null;
   var mem = cardMemory[slot.id];
   if (!mem || !mem.r) return null;
   return { r: mem.r, s: mem.s, known: true, remembered: true, id: slot.id };
 }
 function rememberState(state) {
   var players = state && state.players;
-  if (!players || players.length !== 4) return;
+  if (!players) return;
   players.forEach(function(player) {
     (player.slots || []).forEach(function(slot) {
       if (slot && slot.id && slot.r) cardMemory[slot.id] = { r: slot.r, s: slot.s };
     });
   });
 }
-function faceForMove(c, p, i) {
+function visibleFace(c, p, i) {
   var pl = playerById(c, p);
   var slot = pl && pl.slots ? pl.slots[i] : null;
   if (!slot) return null;
+  if (Array.isArray(slot.known)) {
+    if (slot.known[c.you]) return slot;
+    if (slot.noted && slot.r) return slot;
+    return null;
+  }
   if (slot.r) return slot;
   return rememberedFace(slot, p, c.you, c.n);
+}
+function dumpRank(c) {
+  if (!c || c.pending || !c.pileTop) return null;
+  if (!c.myTurn) {
+    if (!offTurnWindow(c)) return null;
+    if (c.phase === "chain") return c.chainRank || c.pileTop.r;
+    return c.pileTop.r;
+  }
+  if (c.phase === "chain") return c.chainRank || c.pileTop.r;
+  if (c.phase === "act") return c.pileTop.r;
+  if (c.phase === "draw" && c.free) return c.pileTop.r;
+  if (c.phase === "pick" && c.intent === "discard") return c.pileTop.r;
+  return null;
+}
+function knownMatchingOpp(c, p, i) {
+  var rank = dumpRank(c);
+  if (!rank || p === c.you || lockedSeat(c, p)) return false;
+  var face = visibleFace(c, p, i);
+  return !!(face && face.r === rank);
+}
+function giftFaceDown(c, p, i) {
+  var pl = playerById(c, p);
+  var slot = pl && pl.slots ? pl.slots[i] : null;
+  if (!slot) return false;
+  if (Array.isArray(slot.known)) return !slot.known[c.you];
+  return !slot.known && !slot.r;
 }
 function legalMovesFrom(source) {
   var c = playCtx();
@@ -1355,12 +1399,11 @@ function legalMovesFrom(source) {
   if (c.phase === "memorize" || c.phase === "reveal" || c.phase === "keepBoth" || c.phase === "peekReveal") return [];
   if (!c.myTurn) {
     var off = [];
-    if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you && source.zone === "hand" && source.p === c.you && occupied(c, source.p, source.i)) {
+    if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you && source.zone === "hand" && source.p === c.you && giftFaceDown(c, source.p, source.i)) {
       off.push({ gesture: "give", targets: [{ zone: "hand", p: c.dumpGive.oppPid, i: c.dumpGive.emptiedI }] });
     }
-    if (offTurnWindow(c) && source.zone === "hand" && source.p !== c.you && occupied(c, source.p, source.i)) {
-      var seen = faceForMove(c, source.p, source.i);
-      if (seen) off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
+    if (source.zone === "hand" && source.p !== c.you && knownMatchingOpp(c, source.p, source.i)) {
+      off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
     }
     return off;
   }
@@ -1384,8 +1427,11 @@ function legalMovesFrom(source) {
     if (mine && c.phase === "chain") {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
-    if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0) {
+    if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0 && giftFaceDown(c, source.p, source.i)) {
       moves.push({ gesture: "give", targets: [{ zone: "hand", p: c.dumpGive.oppPid, i: c.dumpGive.emptiedI }] });
+    }
+    if (!mine && knownMatchingOpp(c, source.p, source.i)) {
+      moves.push({ gesture: "offDump", targets: [{ zone: "center" }] });
     }
     if (mine && c.phase === "power" && c.power === "Q" && (c.powerStep === "q-mine" || (c.powerStep === "q-theirs" && c.powerTarget && c.powerTarget.pid === source.p && c.powerTarget.i === source.i))) {
       var qt = oppTargets(c);
@@ -1407,20 +1453,20 @@ function dragHintFor(c) {
   if (c.phase === "keepBoth" || c.phase === "peekReveal") return "";
   if (!c.myTurn) {
     if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you) {
-      return "Drag one of your cards onto their empty slot. You have 5 seconds.";
+      return "Drag one of your face-down cards onto their empty slot. You have 5 seconds.";
     }
-    if (offTurnWindow(c)) return "If you have seen a matching card in another hand, drag it onto the center. You then give them one of yours.";
+    if (offTurnWindow(c)) return "If you have seen a matching card in another hand, drag it onto the center. Then give them one of your face-down cards.";
     return "Waiting for the other player.";
   }
-  if (c.phase === "dumpGive") return "Drag one of your cards onto the empty slot.";
-  if (c.phase === "chain") return "Drag a card from your hand onto the center, or Pass.";
+  if (c.phase === "dumpGive") return "Drag one of your face-down cards onto the empty slot.";
+  if (c.phase === "chain") return "Drag a matching card from your hand onto the center, or a known matching opponent card onto the center. Or Pass.";
   if (c.phase === "power") {
     if (c.powerStep === "q-mine" || c.powerStep === "q-theirs") return "Drag one of your cards onto an opponent card to trade.";
     if (c.powerStep === "k-trade") return "Drag your peeked card onto theirs to trade, or Pass.";
     return "Tap a highlighted card.";
   }
-  if (c.phase === "act") return "Drag the center card onto one of yours to swap, or onto an opponent card to dump. Drag a hand card onto the center to discard.";
-  if (c.phase === "draw" && c.free && c.pileTop) return "Drag the center card onto one of yours to pick it, or onto an opponent card to dump. Drag a hand card onto the center to discard.";
+  if (c.phase === "act") return "Drag the center card onto one of yours to swap, or onto an opponent card to dump. Drag a known matching opponent card onto the center, then give them a face-down card. Drag one of your cards onto the center to discard.";
+  if (c.phase === "draw" && c.free && c.pileTop) return "Drag the center card onto one of yours to pick it, or onto an opponent card to dump. Drag a known matching opponent card onto the center, then give them a face-down card. Drag one of your cards onto the center to discard.";
   if (c.phase === "draw") return "Draw, or Declare when you are ready.";
   return "";
 }
@@ -1730,6 +1776,7 @@ function applyLocalDrag(msg) {
   if (gesture === "swap" || gesture === "claim") return localSwapOrClaim(gesture, msg.i);
   if (gesture === "discard") return localDiscard(msg.i);
   if (gesture === "dump") return localDump(msg.p, msg.i);
+  if (gesture === "offDump") return localKnownDump(msg.p, msg.i);
   if (gesture === "give") return localGive(msg.i);
   if (gesture === "qtrade") return localQueen(msg.i, msg.tp, msg.ti);
   if (gesture === "ktrade") return localKing(msg.p, msg.i, msg.tp, msg.ti);
@@ -1789,13 +1836,52 @@ function localDump(oppPid, i) {
   if ((G.phase === "act" || (G.phase === "draw" && G.free)) && G.pick.indexOf(oppPid + ":" + i) < 0) addDumpPicks(G.turn);
   return !!tryDumpOpponent(oppPid, i);
 }
+function localFaceDown(card, pid) {
+  // Face-up means the human is being shown the face. known[1] is the computer's private memory and still a back.
+  return !!(card && Array.isArray(card.known) && !card.known[0]);
+}
+function localKnownDump(oppPid, i) {
+  if (!G || oppPid === 0 || handLocked(oppPid) || G.pending) return false;
+  var onTurn = G.turn === 0;
+  var allowed = onTurn
+    ? (G.phase === "act" || (G.phase === "draw" && G.free) || G.phase === "chain" || (G.phase === "pick" && G.intent === "discard"))
+    : (G.phase === "act" || G.phase === "chain" || (G.phase === "draw" && G.free));
+  if (!allowed || !pileTop()) return false;
+  var card = G.players[oppPid] && G.players[oppPid].slots[i];
+  if (!card || !(card.known[0] || card.noted)) return false;
+  var rank = matchRankForDump();
+  if (!rank || card.r !== rank) return false;
+  if (!G.players[0].slots.some(function(c) { return localFaceDown(c, 0); })) return false;
+  var resumePhase = G.phase;
+  var resumeFree = !!G.free;
+  var remaining = G.turnEndsAt != null ? Math.max(0, G.turnEndsAt - Date.now()) : null;
+  var resumeTurnWaitKey = G.turnWaitKey || null;
+  G.players[oppPid].slots[i] = null;
+  G.pile.push(card);
+  if (onTurn) {
+    G.free = true;
+    say("Dumped " + label(card) + " from " + G.players[oppPid].name + " onto the center.");
+    startDumpGive(0, oppPid, i, rank, null);
+  } else {
+    say("Discarded a seen matching card from " + G.players[oppPid].name + ". Give them one of your face-down cards.");
+    startDumpGive(0, oppPid, i, rank, {
+      offTurn: true,
+      endsAt: Date.now() + 5000,
+      resumePhase: resumePhase,
+      resumeFree: resumeFree,
+      resumeRemainingMs: remaining,
+      resumeTurnWaitKey: resumeTurnWaitKey
+    });
+  }
+  return true;
+}
 function localGive(i) {
   if (!G || G.phase !== "dumpGive" || !G.dumpGive) return false;
-  if (G.turn !== 0) return false;
-  if (G.pick.indexOf(G.turn + ":" + i) < 0) return false;
-  if (!G.players[G.turn].slots[i]) return false;
-  completeDumpGive(i);
-  return true;
+  var actor = G.dumpGive.actor;
+  if (actor !== 0) return false;
+  if (G.pick.indexOf(actor + ":" + i) < 0) return false;
+  if (!localFaceDown(G.players[actor].slots[i], actor)) return false;
+  return completeDumpGive(i);
 }
 function localQueen(myI, oppPid, oppI) {
   if (!G || G.turn !== 0 || G.phase !== "power" || G.power !== "Q") return false;
@@ -1920,6 +2006,7 @@ function renderOnline() {
       var el = cardEl(shown, (known || !!memory) && !!c, !memorizing && slotWantsPick(ctx, player.id, i), flash);
       if (memory) el.classList.add("remembered");
       if (!c) el.textContent = "·";
+      markWiggle(el, online.wiggle, player.id, i);
       wireHandCard(el, player.id, i, memorizing);
       grid.appendChild(el);
     });
@@ -1999,6 +2086,7 @@ function returnToSetup() {
   var chipBar = document.getElementById("chipBar");
   if (chipBar) { chipBar.hidden = true; chipBar.textContent = ""; }
   cardMemory = {};
+  wiggleSeen = {};
   turnTimerSuffix = "to move";
   setChipStatus("");
   loadChipLobby();
@@ -2088,6 +2176,7 @@ function deal(n) {
     }
     var ends = Date.now() + 30000;
     clearKeepBothTimer();
+    wiggleSeen = {};
     G = {n:n, cols:cols, deck:deck, pile:[], players:players, turn:0, phase:"memorize", declarer:null, queue:[], intent:null, pick:[], free:false, dumpGive:null, power:null, powerStep:null, powerTarget:null, powerMine:null, chainPid:null, chainRank:null, chainSkipFree:null, pending:null, actEndsAt:null, memorizeReady: Array(n).fill(false), memorizeEndsAt: ends};
     document.getElementById("setup").style.display = "none";
     document.getElementById("table").style.display = "block";
@@ -2176,28 +2265,51 @@ function placeCardInHand(pid, card, preferI) {
   slots.push(card);
   return slots.length - 1;
 }
-function startDumpGive(actor, oppPid, emptiedI, rank) {
+function startDumpGive(actor, oppPid, emptiedI, rank, off) {
   clearDecisionTimer();
   G.dumpGive = { actor: actor, oppPid: oppPid, emptiedI: emptiedI, rank: rank };
+  if (off && off.offTurn) {
+    G.dumpGive.offTurn = true;
+    G.dumpGive.endsAt = off.endsAt;
+    G.dumpGive.resumePhase = off.resumePhase;
+    G.dumpGive.resumeFree = off.resumeFree;
+    G.dumpGive.resumeRemainingMs = off.resumeRemainingMs;
+    G.dumpGive.resumeTurnWaitKey = off.resumeTurnWaitKey;
+  }
   G.phase = "dumpGive";
   G.intent = null;
   G.pick = [];
   var slots = G.players[actor].slots;
-  for (var i = 0; i < slots.length; i++) if (slots[i]) G.pick.push(actor + ":" + i);
+  for (var i = 0; i < slots.length; i++) if (localFaceDown(slots[i], actor)) G.pick.push(actor + ":" + i);
   // keep G.free so next can Pick dumped center after turn
-  say("Give them a card — tap one of yours to hand over to " + G.players[oppPid].name + ".");
+  say("Give them a face-down card — drag one of yours to " + G.players[oppPid].name + (off && off.offTurn ? ". You have 5 seconds." : "."));
   render();
   if (actor === 1) cpuSoon(cpuDumpGive, 450);
 }
+function restoreLocalOffTurn(dg) {
+  G.phase = dg.resumePhase || "act";
+  G.free = !!dg.resumeFree;
+  G.intent = null;
+  G.pick = [];
+  G.pending = null;
+  G.actEndsAt = null;
+  G.dumpGive = null;
+  if (dg.resumeTurnWaitKey) G.turnWaitKey = dg.resumeTurnWaitKey;
+  if (dg.resumeRemainingMs != null) G.turnEndsAt = Date.now() + Math.max(0, dg.resumeRemainingMs);
+  if (G.phase === "act" || (G.phase === "draw" && G.free && G.declarer === null)) refreshActDumpPicks();
+  render();
+  if (cpu()) cpuSoon(cpuTurn, 500);
+}
 function completeDumpGive(giveI) {
   var dg = G.dumpGive;
-  if (!dg) return;
+  if (!dg) return false;
   var actor = dg.actor;
   var card = G.players[actor].slots[giveI];
-  if (!card) return;
+  if (!localFaceDown(card, actor)) return false;
   G.players[actor].slots[giveI] = null;
   // The received dump-give card stays face-down for every human/player UI.
   card.known = Array(G.n).fill(false);
+  card.noted = false;
   var receivedI = placeCardInHand(dg.oppPid, card, dg.emptiedI);
   // Preserve only the CPU's private memory; seat 0 never renders known[1].
   if (mode === "local" && actor === cpuId()) {
@@ -2206,9 +2318,29 @@ function completeDumpGive(giveI) {
   }
   var rank = dg.rank;
   var oppName = G.players[dg.oppPid].name;
+  var offTurn = !!dg.offTurn;
+  var resume = {
+    resumePhase: dg.resumePhase,
+    resumeFree: dg.resumeFree,
+    resumeRemainingMs: dg.resumeRemainingMs,
+    resumeTurnWaitKey: dg.resumeTurnWaitKey
+  };
   G.dumpGive = null;
+  if (offTurn) {
+    var consumedDraw = resume.resumePhase === "act" || resume.resumePhase === "chain";
+    say("Gave a card to " + oppName + ".");
+    if (consumedDraw) {
+      G.free = true;
+      G.phase = "draw";
+      finish();
+      return true;
+    }
+    restoreLocalOffTurn(resume);
+    return true;
+  }
   say("Gave a card to " + oppName + ". One match action done — turn ends.");
   beginChain(actor, rank);
+  return true;
 }
 function tryDumpOpponent(pid, i) {
   var actor = G.turn;
@@ -2224,8 +2356,8 @@ function tryDumpOpponent(pid, i) {
     wrongOppDumpKeepBoth(actor, pid, i);
     return true;
   }
-  var hasGive = G.players[actor].slots.some(function(c) { return !!c; });
-  if (!hasGive) { say("Need a card to give them after dumping."); return false; }
+  var hasGive = G.players[actor].slots.some(function(c) { return localFaceDown(c, actor); });
+  if (!hasGive) { say("Need a face-down card to give them after dumping."); return false; }
   G.players[pid].slots[i] = null;
   G.pile.push(card);
   G.free = true; // dumped center Pickable by next after turn
@@ -2312,7 +2444,9 @@ function render() {
       var memorizeReveal = memorizing && player.id === viewer && isBottomTwo;
       var flash = keepBothFlash(ctx, player.id, i);
       var known = c && (G.phase === "reveal" || c.known[viewer] || memorizeReveal || flash);
+      if (c && known) c.noted = true;
       var el = cardEl(c, known, !memorizing && slotWantsPick(ctx, player.id, i), flash);
+      markWiggle(el, G.wiggle, player.id, i);
       wireHandCard(el, player.id, i, memorizing);
       grid.appendChild(el);
     }
@@ -2324,6 +2458,16 @@ function render() {
     showTurnClock(null, false, null);
   } else showChoiceUi(G.pending, null, !cpu(), pileTop() ? label(pileTop()) : "", null);
   syncLocalTurnClock();
+}
+function markWiggle(el, spec, pid, i) {
+  if (!spec || spec.pid !== pid || spec.i !== i) return;
+  var key = spec.pid + ":" + spec.i + ":" + spec.until;
+  var now = Date.now();
+  if (!wiggleSeen[key]) wiggleSeen[key] = now;
+  var elapsed = now - wiggleSeen[key];
+  if (elapsed >= 2000) return;
+  el.classList.add("wiggle");
+  if (elapsed) el.style.animationDelay = (-elapsed) + "ms";
 }
 function cardEl(c, known, pick, flash) {
   var el = document.createElement("button");
@@ -2441,6 +2585,14 @@ function syncLocalTurnClock() {
     if (!G.turnWaitKey) G.turnWaitKey = localTurnKey();
   }
   if (deciding && G.turnEndsAt != null) G.actEndsAt = null;
+  if (G.phase === "dumpGive" && G.dumpGive && G.dumpGive.offTurn) {
+    G.turnEndsAt = null;
+    G.turnWaitKey = "off-give";
+    turnTimerSuffix = "to give a card";
+    showTurnClock(G.dumpGive.endsAt, G.dumpGive.actor === 0, expireLocalGive);
+    return;
+  }
+  turnTimerSuffix = "to move";
   if (G.pending) {
     if (G.turnEndsAt != null && Date.now() >= G.turnEndsAt) {
       syncingTurn = true;
@@ -2473,6 +2625,38 @@ function syncLocalTurnClock() {
 function expireLocalTurn() {
   if (!G || mode !== "local" || G.turnEndsAt == null || Date.now() < G.turnEndsAt) return;
   localAutoPass();
+}
+function expireLocalGive() {
+  if (!G || mode !== "local" || syncingTurn) return;
+  if (!G.dumpGive || !G.dumpGive.offTurn) return;
+  if (G.dumpGive.endsAt == null || Date.now() < G.dumpGive.endsAt) return;
+  syncingTurn = true;
+  try { localAutoGiveOffTurn(); } finally { syncingTurn = false; }
+  syncLocalTurnClock();
+}
+function localAutoGiveOffTurn() {
+  if (!G || !G.dumpGive || !G.dumpGive.offTurn) return;
+  var dg = G.dumpGive;
+  var slots = G.players[dg.actor].slots;
+  var giveI = -1;
+  for (var i = 0; i < slots.length; i++) if (localFaceDown(slots[i], dg.actor)) { giveI = i; break; }
+  if (giveI >= 0 && completeDumpGive(giveI)) return;
+  var consumed = dg.resumePhase === "act" || dg.resumePhase === "chain";
+  var snapshot = {
+    resumePhase: dg.resumePhase,
+    resumeFree: dg.resumeFree,
+    resumeRemainingMs: dg.resumeRemainingMs,
+    resumeTurnWaitKey: dg.resumeTurnWaitKey
+  };
+  G.dumpGive = null;
+  say("No card left to give.");
+  if (consumed) {
+    G.free = true;
+    G.phase = "draw";
+    finish();
+    return;
+  }
+  restoreLocalOffTurn(snapshot);
 }
 function clearMoveState() {
   G.intent = null;
@@ -2673,6 +2857,7 @@ function swapIntoHand(pid, i) {
   G.players[pid].slots[i] = taken;
   G.pile[G.pile.length - 1] = card;
   G.free = false;
+  G.wiggle = { pid: pid, i: i, until: Date.now() + 2000 };
   return taken;
 }
 function onCard(ev) {
@@ -2684,7 +2869,9 @@ function onCard(ev) {
     if (G.phase === "keepBoth" || G.phase === "peekReveal") return;
     if (G.phase === "power") { onPowerCard(pid, i); return; }
     if (G.phase === "dumpGive") {
-      if (pid !== G.turn || G.pick.indexOf(pid + ":" + i) < 0) return;
+      var giveActor = G.dumpGive && G.dumpGive.actor;
+      if (pid !== giveActor || G.pick.indexOf(pid + ":" + i) < 0) return;
+      if (!localFaceDown(G.players[giveActor].slots[i], giveActor)) return;
       return completeDumpGive(i);
     }
     if (G.phase === "act" || (G.phase === "draw" && G.free)) {
@@ -3197,7 +3384,7 @@ function cpuDoDump(oppPid, slotI, rank) {
   G.phase = "dumpGive";
   G.intent = null;
   G.pick = [];
-  G.players[me].slots.forEach(function(c, i) { if (c) G.pick.push(me + ":" + i); });
+  G.players[me].slots.forEach(function(c, i) { if (localFaceDown(c, me)) G.pick.push(me + ":" + i); });
   render();
   cpuSoon(cpuDumpGive, 400);
   return true;
@@ -3205,6 +3392,11 @@ function cpuDoDump(oppPid, slotI, rank) {
 function cpuDumpGive() {
   if (!G || G.phase !== "dumpGive" || !G.dumpGive || G.dumpGive.actor !== cpuId()) return;
   var giveI = cpuPickGiveAway();
+  var giveSlots = G.players[cpuId()].slots;
+  if (giveI >= 0 && !localFaceDown(giveSlots[giveI], cpuId())) giveI = -1;
+  if (giveI < 0) {
+    for (var gi = 0; gi < giveSlots.length; gi++) if (localFaceDown(giveSlots[gi], cpuId())) { giveI = gi; break; }
+  }
   if (giveI < 0) {
     // Nowhere to give from — end turn (one dump action already resolved on center)
     var dg = G.dumpGive;
