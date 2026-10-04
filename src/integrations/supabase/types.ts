@@ -74,6 +74,36 @@ export type Database = {
         }
         Relationships: []
       }
+      declare_wallets: {
+        Row: {
+          applied_keys: Json
+          chips: number
+          claim_available_at: string | null
+          created_at: string
+          id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          applied_keys?: Json
+          chips?: number
+          claim_available_at?: string | null
+          created_at?: string
+          id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          applied_keys?: Json
+          chips?: number
+          claim_available_at?: string | null
+          created_at?: string
+          id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
