@@ -63,12 +63,12 @@
     box-shadow: none;
     transition: background .16s ease, transform .16s ease, border-color .16s ease;
   }
-  button:hover:not(:disabled) {
+  button:hover:not(:disabled):not(.card) {
     background: var(--panel-soft);
     border-color: var(--sand);
     transform: translateY(-1px);
   }
-  button:active:not(:disabled) { transform: translateY(0); }
+  button:active:not(:disabled):not(.card) { transform: translateY(0); }
   input { cursor: text; width: 100%; background: var(--panel); }
   input:focus { outline: 3px solid color-mix(in srgb, var(--olive) 20%, transparent); border-color: var(--olive); }
   button:disabled { opacity: .42; cursor: default; box-shadow: none; }
@@ -1419,10 +1419,31 @@ function dumpRank(c) {
   return null;
 }
 function knownMatchingOpp(c, p, i) {
+  if (!c || p === c.you || lockedSeat(c, p)) return false;
+  return seenMatchingCard(c, p, i);
+}
+function seenOppTargets(c) {
+  var out = [];
+  for (var k = 0; k < c.players.length; k++) {
+    var id = c.players[k].id;
+    if (id === c.you || lockedSeat(c, id)) continue;
+    var slots = c.players[k].slots || [];
+    for (var i = 0; i < slots.length; i++) if (knownMatchingOpp(c, id, i)) out.push({ zone: "hand", p: id, i: i });
+  }
+  return out;
+}
+// Rank used for a drag affordance. Own memorized cards stay face-down; the
+// browser may only use a rank it was already shown. Hidden true ranks do not.
+function seenMatchingCard(c, p, i) {
   var rank = dumpRank(c);
-  if (!rank || p === c.you || lockedSeat(c, p)) return false;
+  if (!rank) return false;
   var face = visibleFace(c, p, i);
-  return !!(face && face.r === rank);
+  if (face && face.r === rank) return true;
+  if (!c || p !== c.you) return false;
+  var pl = playerById(c, p);
+  var slot = pl && pl.slots ? pl.slots[i] : null;
+  var mem = slot && slot.id ? cardMemory[slot.id] : null;
+  return !!(mem && mem.r === rank);
 }
 function giftFaceDown(c, p, i) {
   var pl = playerById(c, p);
@@ -1452,7 +1473,7 @@ function legalMovesFrom(source) {
     if (c.phase === "act" && own.length) moves.push({ gesture: "swap", targets: own });
     if (c.phase === "draw" && c.free && own.length) moves.push({ gesture: "claim", targets: own });
     if (dumpWindow(c)) {
-      var opps = oppTargets(c);
+      var opps = c.phase === "chain" ? seenOppTargets(c) : oppTargets(c);
       if (opps.length) moves.push({ gesture: "dump", targets: opps });
     }
   }
@@ -1462,7 +1483,7 @@ function legalMovesFrom(source) {
     if (mine && (c.phase === "act" || (c.phase === "draw" && c.free && c.pileTop) || (c.phase === "pick" && c.intent === "discard" && c.pick.indexOf(key) >= 0))) {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
-    if (mine && c.phase === "chain") {
+    if (mine && c.phase === "chain" && seenMatchingCard(c, source.p, source.i)) {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
     if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0 && giftFaceDown(c, source.p, source.i)) {
@@ -1841,7 +1862,7 @@ function localDiscard(i) {
   if (!card || !drawn) return false;
   if (G.phase === "chain") {
     if (G.pick.indexOf(pid + ":" + i) < 0) return false;
-    if (card.r !== G.chainRank) return false;
+    if (!playerSaw(pid, card, pid, i) || card.r !== G.chainRank) return false;
     var afterPeek = G.chainSkipFree === false;
     G.players[pid].slots[i] = null;
     G.pile.push(card);
@@ -2275,19 +2296,30 @@ function addDumpPicks(actor) {
     }
   }
 }
-function addChainOppPicks(actor, rank) {
-  if (actor == null || !rank) return;
+function playerSaw(pid, card, owner, i) {
+  if (!card) return false;
+  if (pid === cpuId()) return cpuKnows(owner, i);
+  return !!(card.known[pid] || card.noted);
+}
+function chainTargetKeys(pid, rank) {
+  var keys = [];
+  var mine = G.players[pid].slots;
+  for (var i = 0; i < mine.length; i++) {
+    var own = mine[i];
+    if (own && own.r === rank && playerSaw(pid, own, pid, i)) keys.push(pid + ":" + i);
+  }
+  var canGive = false;
+  for (var g = 0; g < mine.length; g++) if (localFaceDown(mine[g], pid)) canGive = true;
+  if (!canGive) return keys;
   for (var p = 0; p < G.n; p++) {
-    if (p === actor || handLocked(p)) continue;
+    if (p === pid || handLocked(p)) continue;
     var slots = G.players[p].slots;
-    for (var i = 0; i < slots.length; i++) {
-      var c = slots[i];
-      if (c && c.r === rank) {
-        var key = p + ":" + i;
-        if (G.pick.indexOf(key) < 0) G.pick.push(key);
-      }
+    for (var j = 0; j < slots.length; j++) {
+      var card = slots[j];
+      if (card && card.r === rank && playerSaw(pid, card, p, j)) keys.push(p + ":" + j);
     }
   }
+  return keys;
 }
 function refreshActDumpPicks() {
   if (!G || cpu()) return;
@@ -2392,6 +2424,7 @@ function tryDumpOpponent(pid, i) {
   if (G.pick.indexOf(key) < 0) return false;
   var card = G.players[pid].slots[i];
   if (!card) return false;
+  if (G.phase === "chain" && !playerSaw(actor, card, pid, i)) return false;
   if (card.r !== rank) {
     if (G.phase === "chain") return false;
     wrongOppDumpKeepBoth(actor, pid, i);
@@ -2926,7 +2959,7 @@ function onCard(ev) {
         return;
       }
       var ch = G.players[pid].slots[i];
-      if (!ch || ch.r !== G.chainRank) return;
+      if (!ch || !playerSaw(G.turn, ch, pid, i) || ch.r !== G.chainRank) return;
       var afterPeek = G.chainSkipFree === false;
       G.players[pid].slots[i] = null;
       G.pile.push(ch);
@@ -2979,8 +3012,10 @@ function beginChain(pid, rank, allowOne, opts) {
   if (pileTop()) G.free = true; // discarded/dumped/swapped top Pickable for next
   if (!allowOne) return finish();
 
-  var hasOwn = G.players[pid].slots.some(function(c) { return c && c.r === rank; });
-  if (!hasOwn) {
+  // One follow-up, only for a card this player has seen. An unseen match must
+  // not keep Pass available or let the computer play the card first.
+  var keys = chainTargetKeys(pid, rank);
+  if (!keys.length) {
     if (keepCenter) G.free = false;
     return finish();
   }
@@ -2988,11 +3023,7 @@ function beginChain(pid, rank, allowOne, opts) {
   G.phase = "chain";
   G.chainPid = pid;
   G.chainRank = rank;
-  for (var i = 0; i < G.players[pid].slots.length; i++) {
-    var c = G.players[pid].slots[i];
-    if (c && c.r === rank) G.pick.push(pid + ":" + i);
-  }
-  addChainOppPicks(pid, rank);
+  G.pick = keys;
   if (keepCenter) {
     G.free = false;
     G.chainSkipFree = false;

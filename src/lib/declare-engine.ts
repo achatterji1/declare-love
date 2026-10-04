@@ -388,17 +388,22 @@ function addDumpPicks(G: Game, actor: number | null): void {
   }
 }
 
-// After a swap or peek the center card was just placed. Only a matching opponent card may be dumped.
-function addChainOppPicks(G: Game, actor: number, rank: string): void {
+// After a swap or peek, one follow-up is allowed. Only cards this player has
+// already seen qualify — an unseen match must not open the chance or accept the drag.
+function seenChainKeys(G: Game, pid: number, rank: string): string[] {
+  const keys: string[] = [];
+  G.players[pid].slots.forEach((c, i) => {
+    if (c && c.r === rank && hasSeen(c, pid)) keys.push(pid + ":" + i);
+  });
+  const canGive = G.players[pid].slots.some((c) => c && isFaceDownFor(c, pid));
+  if (!canGive) return keys;
   for (let p = 0; p < G.n; p++) {
-    if (p === actor || handLocked(G, p)) continue;
+    if (p === pid || handLocked(G, p)) continue;
     G.players[p].slots.forEach((c, i) => {
-      if (c && c.r === rank) {
-        const key = p + ":" + i;
-        if (G.pick.indexOf(key) < 0) G.pick.push(key);
-      }
+      if (c && c.r === rank && hasSeen(c, pid)) keys.push(p + ":" + i);
     });
   }
+  return keys;
 }
 
 function writeKeepBothDeadline(room: Room, endsAt: number | null): void {
@@ -1033,9 +1038,10 @@ function beginChain(
   if (pileTop(G)) G.free = true; // discarded/dumped/swapped top Pickable for next
   if (!allowOne) return finish(room);
 
-  // Post-swap / Pick-swap / post-10-peek: only if that rank is still in hand
-  const hasOwn = G.players[pid].slots.some((c) => c && c.r === rank);
-  if (!hasOwn) {
+  // Post-swap / Pick-swap / post-10-peek: one chance, and only for a card this
+  // player has seen. An unseen match must not keep the turn (or Pass) open.
+  const keys = seenChainKeys(G, pid, rank);
+  if (!keys.length) {
     if (keepCenter) G.free = false;
     return finish(room);
   }
@@ -1043,10 +1049,7 @@ function beginChain(
   G.phase = "chain";
   G.chainPid = pid;
   G.chainRank = rank;
-  G.players[pid].slots.forEach((c, i) => {
-    if (c && c.r === rank) G.pick.push(pid + ":" + i);
-  });
-  addChainOppPicks(G, pid, rank);
+  G.pick = keys;
   if (keepCenter) {
     G.free = false;
     G.chainSkipFree = false;
@@ -1240,6 +1243,9 @@ function tryDumpOpponent(room: Room, actor: number, oppPid: number, i: number): 
   if (G.pick.indexOf(key) < 0) return false;
   const card = G.players[oppPid].slots[i];
   if (!card) return false;
+  // A chain follow-up may only take a card the actor has seen. An unseen hit
+  // and an unseen miss both refuse, so the drag cannot reveal the rank.
+  if (G.phase === "chain" && !hasSeen(card, actor)) return false;
   if (card.r !== rank) {
     // After a swap or peek, the center card was just placed. A mismatched
     // follow-up dump must not take that card plus the opponent card.
@@ -1325,7 +1331,7 @@ function dragDiscard(room: Room, pid: number, i: number): boolean {
   if (!card || !drawn || pid !== G.turn) return false;
   if (G.phase === "chain") {
     if (G.pick.indexOf(pid + ":" + i) < 0) return false;
-    if (card.r !== G.chainRank) return false;
+    if (!hasSeen(card, pid) || card.r !== G.chainRank) return false;
     const afterPeek = G.chainSkipFree === false;
     G.players[pid].slots[i] = null;
     G.pile.push(card);
@@ -1756,7 +1762,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
         return;
       }
       const ch = G.players[pid].slots[i];
-      if (!ch || ch.r !== G.chainRank) return;
+      if (!ch || !hasSeen(ch, pid) || ch.r !== G.chainRank) return;
       const afterPeek = G.chainSkipFree === false;
       G.players[pid].slots[i] = null;
       G.pile.push(ch);
