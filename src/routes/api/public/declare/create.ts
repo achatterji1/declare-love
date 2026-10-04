@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { makeCode, publicState, type Room } from "@/lib/declare-engine";
 import { requireUser } from "@/lib/declare-auth.server";
+import { playerFacingError } from "@/lib/declare-chips";
 import { insertRoom, roomExists, writeViews } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -40,8 +41,13 @@ export const Route = createFileRoute("/api/public/declare/create")({
         };
         room.seats[0] = { name, token: crypto.randomUUID() };
 
-        await insertRoom(room);
-        await writeViews(room);
+        try {
+          await insertRoom(room);
+          await writeViews(room);
+        } catch (e) {
+          const raw = e instanceof Error ? e.message : "Could not create the table.";
+          return Response.json({ error: playerFacingError(raw, "Could not create the table.") }, { status: 400 });
+        }
 
         return Response.json({
           code,

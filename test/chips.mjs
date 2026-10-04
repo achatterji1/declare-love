@@ -26,6 +26,8 @@ import {
   googleSignInEnabled,
   humanDisplayName,
   isMissingWalletTable,
+  nextClaimMessage,
+  playerFacingError,
   trySit,
 } from "../src/lib/declare-chips.ts";
 
@@ -693,8 +695,18 @@ function testOneDiscardPerCenterCard() {
 }
 
 function testClaimTableMissingIsRecognized() {
-  assert.equal(isMissingWalletTable("Could not find the table 'public.declare_wallets' in the schema cache"), true);
+  const schema = "Could not find the table 'public.declare_wallets' in the schema cache";
+  assert.equal(isMissingWalletTable(schema), true);
   assert.equal(isMissingWalletTable("conflict"), false);
+  assert.equal(playerFacingError(schema, "Could not update chips."), "Could not update chips.");
+  assert.equal(playerFacingError('{"code":"PGRST205","message":"Could not find the table"}', "Could not update chips."), "Could not update chips.");
+  assert.equal(playerFacingError("You cannot afford the buy-in.", "Could not update chips."), "You cannot afford the buy-in.");
+  const opened = 1_000_000;
+  const wallet = applyClaim(createWallet("player-1"), opened).wallet;
+  assert.equal(nextClaimMessage(wallet.claimAvailableAt, opened), "Next claim in 240:00. Waiting does not refresh the window.");
+  assert.equal(nextClaimMessage(wallet.claimAvailableAt, wallet.claimAvailableAt - 1).includes("schema"), false);
+  assert.equal(applyClaim(wallet, wallet.claimAvailableAt - 1).claimed, false);
+  assert.equal(applyClaim(wallet, wallet.claimAvailableAt - 1).wallet.chips, 15000);
 }
 
 function testLobbyCopyStaysQuiet() {

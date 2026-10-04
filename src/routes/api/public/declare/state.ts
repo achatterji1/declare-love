@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { publicState } from "@/lib/declare-engine";
 import { requireUser } from "@/lib/declare-auth.server";
+import { playerFacingError } from "@/lib/declare-chips";
 import { advanceAndSave, loadWallet, seatAuthorized } from "@/lib/declare-store.server";
 import { walletView } from "@/lib/declare-table.server";
 
@@ -36,8 +37,10 @@ export const Route = createFileRoute("/api/public/declare/state")({
           const wallet = playerId ? await loadWallet(playerId) : null;
           return Response.json({ state: publicState(room, seat), wallet: wallet ? walletView(wallet) : null });
         } catch (e) {
-          const msg = e instanceof Error ? e.message : "unauthorized";
-          return Response.json({ error: msg }, { status: msg === "unauthorized" ? 401 : 400 });
+          const raw = e instanceof Error ? e.message : "unauthorized";
+          if (raw === "unauthorized") return Response.json({ error: raw }, { status: 401 });
+          const msg = playerFacingError(raw, "Could not load the table.");
+          return Response.json({ error: msg }, { status: 400 });
         }
       },
     },

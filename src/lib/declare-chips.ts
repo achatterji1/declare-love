@@ -70,6 +70,24 @@ export function isMissingWalletTable(message: string): boolean {
   return /declare_wallets/i.test(message) || /schema cache/i.test(message);
 }
 
+// Players see a plain sentence. Schema-cache and PostgREST text stays on the server.
+export function playerFacingError(message: string, fallback: string): string {
+  if (!message || isMissingWalletTable(message) || /PGRST\d*|postgrest|Could not find the table|permission denied for table/i.test(message)) {
+    return fallback;
+  }
+  return message;
+}
+
+export function nextClaimMessage(claimAvailableAt: number | null, now: number): string {
+  if (claimAvailableAt == null || now >= claimAvailableAt) {
+    return "Claim 5000 chips. The next 4-hour window starts when you claim.";
+  }
+  const total = Math.max(0, Math.ceil((claimAvailableAt - now) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return "Next claim in " + minutes + ":" + (seconds < 10 ? "0" : "") + seconds + ". Waiting does not refresh the window.";
+}
+
 export function googleSignInEnabled(settings: unknown): boolean {
   if (!settings || typeof settings !== "object") return false;
   const external = (settings as { external?: { google?: boolean } }).external;

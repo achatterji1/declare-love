@@ -1132,15 +1132,23 @@ function loadChipLobby() {
     renderOpenTables(res.tables || []);
   }).catch(function() {});
 }
+function playerChipError(message) {
+  if (!message || /schema cache|postgrest|PGRST|Could not find the table|declare_wallets/i.test(message)) {
+    return "Could not update chips.";
+  }
+  return message;
+}
 function claimBonus() {
   if (!requirePlay()) return;
   api("chips", { op: "claim", playerId: playerId }).then(function(res) {
     if (res.wallet) showWallet(res.wallet);
     var hint = document.getElementById("claimHint");
-    if (hint && res.claimed) hint.textContent = "5000 chips added. The next 4 hours start now.";
+    if (!hint) return;
+    if (res.claimed) hint.textContent = "5000 chips added. The next 4 hours start now.";
+    else if (res.message) hint.textContent = res.message;
   }).catch(function(e) {
     var hint = document.getElementById("claimHint");
-    if (hint) hint.textContent = e.message;
+    if (hint) hint.textContent = playerChipError(e && e.message);
   });
 }
 function enterTable(res) {

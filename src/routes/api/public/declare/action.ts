@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { handleAction, publicState } from "@/lib/declare-engine";
 import { requireUser } from "@/lib/declare-auth.server";
+import { playerFacingError } from "@/lib/declare-chips";
 import { creditWalletOnce, loadRoom, loadWallet, mutateRoom, seatAuthorized } from "@/lib/declare-store.server";
 import { chargeNextHand, walletView } from "@/lib/declare-table.server";
 
@@ -62,8 +63,9 @@ export const Route = createFileRoute("/api/public/declare/action")({
               await creditWalletOnce(row.playerId, row.amount, "refund-redeal:" + upper + ":" + row.playerId + ":" + crypto.randomUUID()).catch(() => {});
             }
           }
-          const msg = e instanceof Error ? e.message : "Action failed.";
-          if (msg === "unauthorized") return Response.json({ error: msg }, { status: 401 });
+          const raw = e instanceof Error ? e.message : "Action failed.";
+          if (raw === "unauthorized") return Response.json({ error: raw }, { status: 401 });
+          const msg = playerFacingError(raw, "Action failed.");
           return Response.json({ error: msg }, { status: msg === "Room not found." ? 404 : 400 });
         }
       },

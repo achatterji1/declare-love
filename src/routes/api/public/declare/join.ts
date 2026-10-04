@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { publicState, startGame } from "@/lib/declare-engine";
 import { requireUser } from "@/lib/declare-auth.server";
+import { playerFacingError } from "@/lib/declare-chips";
 import { mutateRoom } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -38,8 +39,10 @@ export const Route = createFileRoute("/api/public/declare/join")({
             state: publicState(room, result.seat),
           });
         } catch (e) {
-          const msg = e instanceof Error ? e.message : "Could not join.";
-          const status = msg === "unauthorized" ? 401 : msg === "Room not found." ? 404 : 400;
+          const raw = e instanceof Error ? e.message : "Could not join.";
+          if (raw === "unauthorized") return Response.json({ error: raw }, { status: 401 });
+          const msg = playerFacingError(raw, "Could not join.");
+          const status = msg === "Room not found." ? 404 : 400;
           return Response.json({ error: msg }, { status });
         }
       },

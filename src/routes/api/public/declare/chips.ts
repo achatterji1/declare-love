@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { requireUser } from "@/lib/declare-auth.server";
+import { playerFacingError } from "@/lib/declare-chips";
 import { claimBonus, listTables, openWallet, sitDown } from "@/lib/declare-table.server";
 
 const Body = z
@@ -42,8 +43,9 @@ export const Route = createFileRoute("/api/public/declare/chips")({
           }
           return Response.json({ error: "Invalid chip request." }, { status: 400 });
         } catch (e) {
-          const msg = e instanceof Error ? e.message : "Could not update chips.";
-          if (msg === "unauthorized") return Response.json({ error: msg }, { status: 401 });
+          const raw = e instanceof Error ? e.message : "Could not update chips.";
+          if (raw === "unauthorized") return Response.json({ error: raw }, { status: 401 });
+          const msg = playerFacingError(raw, "Could not update chips.");
           const status = msg === "Room not found." ? 404 : 400;
           return Response.json({ error: msg }, { status });
         }
