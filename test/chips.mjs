@@ -27,7 +27,10 @@ import {
   humanDisplayName,
   isMissingWalletTable,
   nextClaimMessage,
+  applyBuyIn,
+  applyPaidStakes,
   playerFacingError,
+  seatsOwingBuyIn,
   trySit,
 } from "../src/lib/declare-chips.ts";
 
@@ -132,8 +135,19 @@ function testBuyInAndWinnerTakesPot() {
   const satBo = trySit(table, bo, "Bo", "b");
   assert.equal(satAnn.ok, true);
   assert.equal(satBo.ok, true);
-  assert.equal(satAnn.wallet.chips, 9500);
-  assert.equal(satBo.wallet.chips, 9500);
+  assert.equal(satAnn.wallet.chips, 10000);
+  assert.equal(satBo.wallet.chips, 10000);
+  assert.equal(table.pot, 0);
+  assert.equal(table.stakes.length, 0);
+  const owed = seatsOwingBuyIn(table);
+  assert.equal(owed.length, 2);
+  const annPaid = applyBuyIn(satAnn.wallet, owed[0].amount);
+  const boPaid = applyBuyIn(satBo.wallet, owed[1].amount);
+  assert.equal(annPaid.ok, true);
+  assert.equal(boPaid.ok, true);
+  assert.equal(annPaid.wallet.chips, 9500);
+  assert.equal(boPaid.wallet.chips, 9500);
+  applyPaidStakes(table, owed);
   assert.equal(table.pot, 1000);
 
   const room = room4();
@@ -151,7 +165,7 @@ function testBuyInAndWinnerTakesPot() {
   assert.equal(room.payouts[0].playerId, "ann");
   assert.equal(room.payouts[0].amount, 1000);
   assert.match(room.G.log, /Pot 1000\. Ann wins\.$/);
-  const paid = credit(satAnn.wallet, room.payouts[0].amount, room.payouts[0].key);
+  const paid = credit(annPaid.wallet, room.payouts[0].amount, room.payouts[0].key);
   assert.equal(paid.chips, 10500);
   assert.equal(credit(paid, room.payouts[0].amount, room.payouts[0].key).chips, 10500);
 
@@ -312,6 +326,98 @@ function testMidHandQuitForfeitsOnlyThatSeat() {
   assert.equal(lobbyRoom.payouts[0].playerId, "ann");
   assert.equal(lobbyRoom.payouts[0].amount, 500);
   assert.equal(lobbyRoom.stakes.length, 1);
+
+  const waiting = {
+    code: "ONE",
+    n: 4,
+    cardsN: 4,
+    status: "lobby",
+    version: 1,
+    G: null,
+    seats: [{ name: "Ann", token: "a", playerId: "ann" }, null, null, null],
+    tier: "bronze",
+    pot: 0,
+    buyIn: 500,
+    stakes: [],
+    payouts: null,
+  };
+  leaveSeat(waiting, 0);
+  assert.equal(waiting.status, "abandoned");
+  assert.equal(waiting.pot, 0);
+  assert.equal(waiting.payouts, null);
+  assert.equal(waiting.stakes.length, 0);
+  assert.ok(waiting.seats.every((seat) => seat == null));
+
+  const charged = {
+    code: "PAY",
+    n: 4,
+    cardsN: 4,
+    status: "lobby",
+    version: 4,
+    G: null,
+    seats: [{ name: "Ann", token: "a", playerId: "ann" }, null, null, null],
+    tier: "bronze",
+    pot: 500,
+    buyIn: 500,
+    stakes: [{ playerId: "ann", seat: 0, amount: 500 }],
+    payouts: null,
+  };
+  leaveSeat(charged, 0);
+  assert.equal(charged.status, "abandoned");
+  assert.equal(charged.pot, 0);
+  assert.equal(charged.stakes.length, 0);
+  assert.ok(charged.seats.every((seat) => seat == null));
+  assert.equal(charged.payouts.length, 1);
+  assert.equal(charged.payouts[0].playerId, "ann");
+  assert.equal(charged.payouts[0].amount, 500);
+}
+
+function testHandStartTakesTheBuyInAndQuitForfeits() {
+  const table = lobby("silver");
+  table.code = "HAND";
+  table.n = 4;
+  table.cardsN = 4;
+  table.version = 1;
+  table.G = null;
+  table.tier = "silver";
+  table.actMs = 30000;
+  table.payouts = null;
+  const names = ["Ann", "Bo", "Cy", "Dee"];
+  const wallets = names.map((name) => createWallet(name.toLowerCase()));
+  wallets.forEach((wallet, index) => {
+    const sat = trySit(table, wallet, names[index], "t" + index);
+    assert.equal(sat.ok, true);
+    assert.equal(wallet.chips, 10000);
+  });
+  assert.equal(table.pot, 0);
+  assert.equal(table.status, "lobby");
+  leaveSeat(table, 3);
+  assert.equal(table.status, "lobby");
+  assert.equal(table.seats[3], null);
+  assert.equal(table.pot, 0);
+  assert.equal(table.payouts, null);
+  assert.equal(wallets[3].chips, 10000);
+  trySit(table, wallets[3], "Dee", "t3b");
+  const owed = seatsOwingBuyIn(table);
+  assert.equal(owed.length, 4);
+  owed.forEach((row) => {
+    const wallet = wallets.find((item) => item.id === row.playerId);
+    const paid = applyBuyIn(wallet, row.amount);
+    assert.equal(paid.ok, true);
+    wallet.chips = paid.wallet.chips;
+  });
+  applyPaidStakes(table, owed);
+  assert.equal(table.pot, 4000);
+  startGame(table);
+  assert.equal(table.status, "playing");
+  assert.equal(table.G.phase, "memorize");
+  leaveSeat(table, 1);
+  assert.equal(table.status, "playing");
+  assert.equal(table.pot, 4000);
+  assert.equal(table.seats[1], null);
+  assert.equal(table.stakes.find((stake) => stake.playerId === "bo").forfeited, true);
+  assert.equal(wallets[1].chips, 9000);
+  assert.equal(table.payouts, null);
 }
 
 function testQuitThenComputerOnlyWin() {
@@ -581,8 +687,10 @@ function testPlayingTableDoesNotTakeALateJoiner() {
   assert.equal(seat, 1);
   assert.equal(lobbyRoom.status, "lobby");
   assert.equal(lobbyRoom.G, null);
-  assert.equal(lobbyRoom.pot, 1000);
-  assert.equal(lobbyRoom.stakes.length, 2);
+  assert.equal(lobbyRoom.pot, 500);
+  assert.equal(lobbyRoom.stakes.length, 1);
+  assert.equal(lobbyRoom.seats[1].playerId, "eve");
+  assert.equal(seatsOwingBuyIn(lobbyRoom).map((row) => row.playerId).join(","), "eve");
 
   const playing = trySit(
     { status: "playing", seats: [null, null, null, null], pot: 0, buyIn: 500, stakes: [] },
@@ -663,6 +771,7 @@ testPayoutKeyStaysRejected();
 testComputerWinReturnsBuyIns();
 testComputerTiePaysTheWholePotToHumans();
 testMidHandQuitForfeitsOnlyThatSeat();
+testHandStartTakesTheBuyInAndQuitForfeits();
 testQuitThenComputerOnlyWin();
 testChipTablesWaitForPlayers();
 testPlayingTableDoesNotTakeALateJoiner();
@@ -751,6 +860,12 @@ function testLobbyCopyStaysQuiet() {
   assert.equal(html.includes("Chips stay in your wallet"), false);
   assert.equal(html.includes("30s"), false);
   assert.equal(html.includes("15s"), false);
+  assert.equal(html.includes('id="leaveWait"'), true);
+  assert.equal(html.includes('onclick="doQuit()">Leave</button>'), true);
+  assert.equal(html.includes("syncLeaveButton(!!online.tier)") || html.includes("syncLeaveButton(true)"), true);
+  assert.equal(html.includes('id="quit" class="quit-btn" onclick="doQuit()">Quit</button>'), true);
+  assert.equal(html.includes("comes out when the hand starts"), true);
+  assert.equal(html.includes("is in the pot"), false);
   assert.equal(html.includes('class="primary" type="button" onclick="deal(2)"'), true);
   assert.equal(html.includes('class="outline" type="button" onclick="createInvite()"'), true);
   assert.equal(html.includes('id="claimBtn"'), true);

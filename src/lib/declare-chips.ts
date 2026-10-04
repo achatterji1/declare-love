@@ -128,6 +128,8 @@ export function humanDisplayName(name: string): string {
   return trimmed;
 }
 
+// Sitting in the lobby only holds a seat. The wallet and the pot stay put until
+// the hand actually starts.
 export function trySit(
   room: Sittable,
   wallet: Wallet,
@@ -139,12 +141,42 @@ export function trySit(
   if (room.seats.some((s) => s && s.playerId === wallet.id)) return { ok: false, wallet, seat: null };
   const idx = room.seats.findIndex((s) => !s);
   if (idx < 0) return { ok: false, wallet, seat: null };
-  const paid = applyBuyIn(wallet, room.buyIn);
-  if (!paid.ok) return { ok: false, wallet, seat: null };
   room.seats[idx] = { name: humanDisplayName(name), token, playerId: wallet.id, computer: false };
-  room.pot += room.buyIn;
-  room.stakes.push({ playerId: wallet.id, seat: idx, amount: room.buyIn });
-  return { ok: true, wallet: paid.wallet, seat: idx };
+  return { ok: true, wallet, seat: idx };
+}
+
+export function seatsOwingBuyIn(room: {
+  status: string;
+  buyIn?: number;
+  seats: ({ playerId?: string; computer?: boolean } | null)[];
+  stakes?: { playerId: string; seat: number; amount: number; forfeited?: boolean }[];
+}): { playerId: string; seat: number; amount: number }[] {
+  const buyIn = room.buyIn || 0;
+  if (room.status !== "lobby" || buyIn <= 0) return [];
+  const stakes = room.stakes || [];
+  const owed: { playerId: string; seat: number; amount: number }[] = [];
+  room.seats.forEach((seat, index) => {
+    if (!seat || seat.computer || !seat.playerId) return;
+    const paid = stakes.some(
+      (row) => row.seat === index && row.playerId === seat.playerId && row.amount > 0 && !row.forfeited,
+    );
+    if (!paid) owed.push({ playerId: seat.playerId, seat: index, amount: buyIn });
+  });
+  return owed;
+}
+
+export function applyPaidStakes(
+  room: { pot?: number; stakes?: { playerId: string; seat: number; amount: number; forfeited?: boolean }[] },
+  paid: { playerId: string; seat: number; amount: number }[],
+): void {
+  const stakes = [...(room.stakes || [])];
+  for (const row of paid) {
+    if (row.amount <= 0) continue;
+    if (stakes.some((stake) => stake.seat === row.seat && stake.playerId === row.playerId && !stake.forfeited)) continue;
+    stakes.push({ playerId: row.playerId, seat: row.seat, amount: row.amount });
+  }
+  room.stakes = stakes;
+  room.pot = stakes.reduce((sum, stake) => sum + stake.amount, 0);
 }
 
 export function computePayouts(input: {

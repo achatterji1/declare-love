@@ -7,7 +7,7 @@
     "dev": "vite dev --port 8080",
     "build": "vite build && node scripts/patch-dist.mjs && node scripts/ensure-dist-index.mjs",
     "build:dev": "vite build && node scripts/patch-dist.mjs && node scripts/ensure-dist-index.mjs",
-    "test": "node --check local-node/server.js && node --experimental-strip-types test/drag-rules.mjs && node --experimental-strip-types test/chips.mjs",
+    "test": "node --check local-node/server.js && node --experimental-strip-types test/drag-rules.mjs && node --experimental-strip-types test/chips.mjs && node --experimental-strip-types --import ./test/register-alias.mjs test/chip-lobby.mjs",
     "start:local": "node local-node/server.js"
   },
   "dependencies": {
