@@ -13,6 +13,7 @@ import {
   reveal,
   startGame,
 } from "../src/lib/declare-engine.ts";
+import { readFileSync } from "node:fs";
 import {
   CLAIM_AMOUNT,
   CLAIM_INTERVAL_MS,
@@ -22,7 +23,11 @@ import {
   computePayouts,
   createWallet,
   credit,
+  googleSignInEnabled,
   humanDisplayName,
+  isMissingWalletTable,
+  nextClaimMessage,
+  playerFacingError,
   trySit,
 } from "../src/lib/declare-chips.ts";
 
@@ -472,8 +477,8 @@ function testOffTurnKnownMatchOnly() {
 
   const beforeGive = legal.G.turn;
   assert.equal(handleAction(legal, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
-  assert.equal(legal.G.phase, "act");
-  assert.equal(legal.G.turn, beforeGive);
+  assert.equal(legal.G.phase, "draw");
+  assert.equal(legal.G.turn, (beforeGive + 1) % legal.G.n);
   assert.equal(legal.G.players[1].slots[0].r, "2");
   assert.ok(legal.G.players[1].slots[0].known.every((flag) => flag === false));
   assert.ok(legal.G.players[1].slots[0].seen.every((flag) => flag === false));
@@ -488,8 +493,8 @@ function testOffTurnGiveTimeoutPicksACard() {
   assert.equal(room.G.phase, "dumpGive");
   assert.equal(room.G.players[2].slots[0].r, "2");
   assert.equal(applyTimers(room, ends), true);
-  assert.equal(room.G.phase, "act");
-  assert.equal(room.G.turn, 0);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
   assert.equal(room.G.players[2].slots[0], null);
   assert.equal(room.G.players[1].slots[0].r, "2");
   assert.ok(room.G.players[1].slots[0].seen.every((flag) => flag === false));
@@ -633,6 +638,120 @@ testPlayingTableDoesNotTakeALateJoiner();
 testEmptySeatNeverTakesTheTurnOrCenterCard();
 testTierClocks();
 testMoveClockByTierKeepsCenterCard();
+function chainRaceRoom() {
+  const room = room4();
+  room.G.phase = "chain";
+  room.G.chainPid = 0;
+  room.G.chainRank = "7";
+  room.G.free = true;
+  room.G.pile = [{ r: "7", s: "S" }];
+  room.G.players[0].slots[0] = card("7", "H", 4);
+  room.G.pick = ["0:0", "1:0"];
+  return room;
+}
+
+function testDrawnCardOffTurnDiscardEndsTheTurn() {
+  const room = room4();
+  assert.equal(room.G.phase, "act");
+  room.G.players[0].slots[0] = card("7", "S", 4);
+  room.G.pick = ["0:0", "1:0"];
+  assert.equal(handleAction(room, 2, { action: "offDiscard", p: 1, i: 0 }), true);
+  assert.equal(room.G.phase, "dumpGive");
+  assert.equal(room.G.dumpGive.resumePhase, "act");
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.players[0].slots[0].r, "7");
+  assert.equal(handleAction(room, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.players[0].slots[0].r, "7");
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.players[0].slots[0].r, "7");
+}
+
+function testOneDiscardPerCenterCard() {
+  const raced = chainRaceRoom();
+  assert.equal(handleAction(raced, 2, { action: "offDiscard", p: 1, i: 0 }), true);
+  assert.equal(raced.G.phase, "dumpGive");
+  assert.equal(handleAction(raced, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), false);
+  assert.equal(raced.G.players[0].slots[0].r, "7");
+  assert.equal(handleAction(raced, 2, { action: "drag", gesture: "give", p: 2, i: 0 }), true);
+  assert.equal(raced.G.phase, "draw");
+  assert.equal(raced.G.turn, 1);
+  assert.equal(raced.G.chainRank, null);
+  assert.equal(raced.G.players[0].slots[0].r, "7");
+  assert.notEqual(handleAction(raced, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(raced.G.turn, 1);
+  assert.equal(raced.G.players[0].slots[0].r, "7");
+
+  const ours = chainRaceRoom();
+  assert.equal(handleAction(ours, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(ours.G.phase, "draw");
+  assert.equal(ours.G.turn, 1);
+  assert.equal(ours.G.players[0].slots[0], null);
+  assert.equal(ours.G.pile[ours.G.pile.length - 1].s, "H");
+  assert.equal(ours.G.players[1].slots[0].r, "7");
+}
+
+function testClaimTableMissingIsRecognized() {
+  const schema = "Could not find the table 'public.declare_wallets' in the schema cache";
+  assert.equal(isMissingWalletTable(schema), true);
+  assert.equal(isMissingWalletTable("conflict"), false);
+  assert.equal(playerFacingError(schema, "Could not update chips."), "Could not update chips.");
+  assert.equal(playerFacingError('{"code":"PGRST205","message":"Could not find the table"}', "Could not update chips."), "Could not update chips.");
+  assert.equal(playerFacingError("You cannot afford the buy-in.", "Could not update chips."), "You cannot afford the buy-in.");
+  const opened = 1_000_000;
+  const wallet = applyClaim(createWallet("player-1"), opened).wallet;
+  assert.equal(nextClaimMessage(wallet.claimAvailableAt, opened), "Next claim in 240:00. Waiting does not refresh the window.");
+  assert.equal(nextClaimMessage(wallet.claimAvailableAt, wallet.claimAvailableAt - 1).includes("schema"), false);
+  assert.equal(applyClaim(wallet, wallet.claimAvailableAt - 1).claimed, false);
+  assert.equal(applyClaim(wallet, wallet.claimAvailableAt - 1).wallet.chips, 15000);
+}
+
+function testLobbyCopyStaysQuiet() {
+  const html = readFileSync(new URL("../public/declare/index.html", import.meta.url), "utf8");
+  assert.equal(html.includes('src="tiers/bronze.jpg"'), true);
+  assert.equal(html.includes('src="tiers/silver.jpg"'), true);
+  assert.equal(html.includes('src="tiers/gold.jpg"'), true);
+  assert.equal(html.includes('src="tiers/vip.jpg"'), true);
+  assert.equal(/src="https?:/.test(html.slice(html.indexOf('class="tier-row"'), html.indexOf('id="chipStatus"'))), false);
+  assert.equal(html.includes("A round takes only a few minutes"), false);
+  assert.equal(html.includes("Chips stay in your wallet"), false);
+  assert.equal(html.includes("30s"), false);
+  assert.equal(html.includes("15s"), false);
+  assert.equal(html.includes('class="primary" type="button" onclick="deal(2)"'), true);
+  assert.equal(html.includes('class="outline" type="button" onclick="createInvite()"'), true);
+  assert.equal(html.includes('id="claimBtn"'), true);
+  assert.equal(html.includes("claimBtn") && html.includes('class="primary" type="button" onclick="claimBonus()"'), false);
+  const manual = html.slice(html.indexOf('id="manual"'));
+  assert.equal(manual.includes("Learning manual"), true);
+  assert.equal(manual.includes("Each player gets four or six cards"), true);
+}
+
+function testSignInGatesPlay() {
+  const html = readFileSync(new URL("../public/declare/index.html", import.meta.url), "utf8");
+  assert.equal(html.includes('id="signin"'), true);
+  assert.equal(html.includes('id="setup" class="panel" hidden'), true);
+  assert.equal(html.includes("Earn a chip bonus"), false);
+  assert.equal(/facebook/i.test(html), false);
+  assert.equal(html.includes('id="googleBtn" hidden'), true);
+  assert.equal(html.includes("Sign in to play."), true);
+  for (const name of ["function deal(n)", "function createInvite()", "function joinInvite()", "function sitTier(tier)", "function sitCode(code)"]) {
+    const start = html.indexOf(name);
+    assert.ok(start >= 0, name);
+    assert.equal(html.slice(start, start + 180).includes("if (!requirePlay()) return;"), true, name + " is gated");
+  }
+  assert.equal(googleSignInEnabled({ external: { google: false, email: false, facebook: false } }), false);
+  assert.equal(googleSignInEnabled({ external: { google: true } }), true);
+  assert.equal(googleSignInEnabled(null), false);
+}
+
 testOffTurnKnownMatchOnly();
 testOffTurnGiveTimeoutPicksACard();
+testDrawnCardOffTurnDiscardEndsTheTurn();
+testOneDiscardPerCenterCard();
+testClaimTableMissingIsRecognized();
+testLobbyCopyStaysQuiet();
+testSignInGatesPlay();
 console.log("chip rules ok");

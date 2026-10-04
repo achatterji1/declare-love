@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { publicState, startGame } from "@/lib/declare-engine";
+import { requireUser } from "@/lib/declare-auth.server";
+import { playerFacingError } from "@/lib/declare-chips";
 import { mutateRoom } from "@/lib/declare-store.server";
 
 const Body = z.object({
@@ -20,6 +22,7 @@ export const Route = createFileRoute("/api/public/declare/join")({
         const name = parsed.data.name;
 
         try {
+          await requireUser(request);
           const { room, result } = await mutateRoom(code, (r) => {
             if (r.tier) throw new Error("Join this table from the chip lobby.");
             if (r.status !== "lobby") throw new Error("That game has already started.");
@@ -36,7 +39,9 @@ export const Route = createFileRoute("/api/public/declare/join")({
             state: publicState(room, result.seat),
           });
         } catch (e) {
-          const msg = e instanceof Error ? e.message : "Could not join.";
+          const raw = e instanceof Error ? e.message : "Could not join.";
+          if (raw === "unauthorized") return Response.json({ error: raw }, { status: 401 });
+          const msg = playerFacingError(raw, "Could not join.");
           const status = msg === "Room not found." ? 404 : 400;
           return Response.json({ error: msg }, { status });
         }

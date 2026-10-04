@@ -74,6 +74,14 @@
   button:disabled { opacity: .42; cursor: default; box-shadow: none; }
   .primary { background: var(--ink); border-color: var(--ink); color: var(--cream); font-weight: 600; }
   .primary:hover:not(:disabled) { background: var(--olive-dark); border-color: var(--olive-dark); }
+  .outline { background: var(--cream); border-color: var(--olive); color: var(--olive-dark); font-weight: 700; }
+  .outline:hover:not(:disabled) { background: var(--panel-soft); border-color: var(--olive); color: var(--olive-dark); }
+  .brand-actions { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #signOutBtn { margin-top: 16px; }
+  #signedInAs { color: var(--muted); font-size: .78rem; letter-spacing: .04em; }
+  #signin { padding: 0; overflow: hidden; }
+  .signin-body { max-width: 420px; margin: 0 auto; padding: 28px; }
+  #authMsg { color: var(--muted); min-height: 1.2em; text-align: center; margin: 12px 0 0; }
   .panel {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -101,14 +109,30 @@
   .join-row button, .join-row input { margin: 0; }
   #choice { grid-column: 1 / -1; min-height: 1.3em; margin: 0; padding: 14px 28px; border-top: 1px solid var(--line); background: var(--panel-soft); color: var(--muted); text-align: center; font-size: .9rem; }
   .chip-lobby { padding: 22px 28px 8px; border-top: 1px solid var(--line); background: #fbf8f3; }
-  .chip-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
-  .chip-head p { margin: 6px 0 0; color: var(--muted); max-width: 42em; }
-  .wallet-box { text-align: right; min-width: 200px; }
+  .chip-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; }
+  .wallet-box { text-align: right; min-width: 160px; }
   .wallet-box strong { font-size: 1.35rem; }
+  #claimBtn {
+    display: inline-block; margin: 4px 0 0; padding: 0; background: transparent; border: 0; box-shadow: none;
+    color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  }
+  #claimBtn:hover:not(:disabled) { background: transparent; border: 0; color: var(--ink); transform: none; }
   #claimHint { color: var(--muted); font-size: .85rem; min-height: 1.2em; }
-  .tier-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }
-  .tier-row button { margin: 0; min-height: 68px; }
-  .tier-row .buy { display: block; color: var(--muted); font-size: .78rem; font-weight: 650; }
+  .tier-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0 8px; }
+  .tier-row button.tier {
+    margin: 0; padding: 0 0 4px; min-height: 0; background: transparent; border: 0; box-shadow: none;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+  }
+  .tier-row button.tier:hover:not(:disabled) { background: transparent; border: 0; transform: translateY(-1px); }
+  .tier-frame {
+    width: 100%; aspect-ratio: 58 / 82; overflow: hidden;
+    border-radius: 9px; border: 1px solid #c3ae91;
+    background: #f7f1e6;
+    box-shadow: 0 4px 8px rgba(71,52,35,.16);
+  }
+  .tier-frame img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; }
+  .tier-name { margin-top: 10px; font-family: "Playfair Display", serif; font-size: 1.02rem; font-weight: 600; color: var(--ink); }
+  .tier-stake { margin-top: 2px; color: var(--muted); font-size: .68rem; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
   #chipStatus { color: var(--olive-dark); font-weight: 650; min-height: 1.2em; }
   .open-tables { display: grid; gap: 8px; margin: 8px 0 16px; }
   .table-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
@@ -386,12 +410,30 @@
   <header class="brand">
     <span class="brand-mark">A memory card game</span>
     <h1>Declare <span style="display:block;font-size:0.4em;font-weight:400;opacity:0.7;letter-spacing:0">Multiplayer Memory Card Game</span></h1>
-    <button type="button" class="manual-launch" id="openManual" onclick="openManual()">Learning manual</button>
+    <div class="brand-actions">
+      <button type="button" class="manual-launch" id="openManual" onclick="openManual()">Learning manual</button>
+      <span id="signedInAs" hidden></span>
+      <button type="button" class="outline" id="signOutBtn" hidden onclick="signOut()">Sign out</button>
+    </div>
   </header>
   <p id="err"></p>
-  <section id="setup" class="panel">
+  <section id="signin" class="panel">
+    <div class="setup-intro"><div><h2>Sign in</h2></div></div>
+    <form class="signin-body" id="signinForm" onsubmit="submitAuth(event)">
+      <p>Sign in to play.</p>
+      <div class="field"><label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="username" required maxlength="120"></div>
+      <div class="field"><label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required minlength="6" maxlength="72"></div>
+      <div class="action-stack">
+        <button class="primary" type="submit" id="authSubmit">Sign in</button>
+        <button class="outline" type="button" id="authSwitch" onclick="toggleAuthMode()">Create an account</button>
+        <button class="outline" type="button" id="googleBtn" hidden onclick="googleSignIn()">Continue with Google</button>
+      </div>
+      <p id="authMsg"></p>
+    </form>
+  </section>
+  <section id="setup" class="panel" hidden>
     <div class="setup-intro">
-      <div><h2>Choose your table</h2><p>A round takes only a few minutes.</p></div>
+      <div><h2>Choose your table</h2></div>
     </div>
     <div class="mode-grid">
       <article class="mode">
@@ -415,7 +457,7 @@
         <p>Create a private table, or join friends with their four-character code.</p>
         <div class="field"><label for="name">Your name</label><input id="name" placeholder="Enter your name" maxlength="16"></div>
         <div class="field"><label for="numPlayers">Players</label><input id="numPlayers" type="number" min="2" max="8" value="2"></div>
-        <div class="action-stack"><button class="primary" type="button" onclick="createInvite()">Create private table</button></div>
+        <div class="action-stack"><button class="outline" type="button" onclick="createInvite()">Create private table</button></div>
         <div class="field"><label for="joinCode">Have a code?</label><div class="join-row"><input id="joinCode" placeholder="ABC12" maxlength="5" style="text-transform:uppercase"><button type="button" onclick="joinInvite()">Join</button></div></div>
         <div id="inviteBox" style="display:none;margin-top:10px">
           <div>Room code: <strong id="inviteCode"></strong></div>
@@ -426,10 +468,7 @@
     </div>
     <section class="chip-lobby" id="chipLobby">
       <div class="chip-head">
-        <div>
-          <h2>Chip tables</h2>
-          <p>Chips stay in your wallet. There is no cash-out. Sitting pays the buy-in into the pot, and the winner of the hand takes it. A table waits for players, up to 4. Once the hand starts, no one else can sit. A player who leaves is out for that hand: the seat stays empty and their buy-in stays in the pot.</p>
-        </div>
+        <h2>Chip tables</h2>
         <div class="wallet-box">
           <div>Wallet <strong id="walletChips">—</strong></div>
           <button type="button" id="claimBtn" onclick="claimBonus()">Claim 5000</button>
@@ -437,10 +476,10 @@
         </div>
       </div>
       <div class="tier-row">
-        <button type="button" data-tier="bronze" onclick="sitTier('bronze')">Bronze<span class="buy">500 chips · 30s</span></button>
-        <button type="button" data-tier="silver" onclick="sitTier('silver')">Silver<span class="buy">1000 chips · 30s</span></button>
-        <button type="button" data-tier="gold" onclick="sitTier('gold')">Gold<span class="buy">2500 chips · 30s</span></button>
-        <button type="button" data-tier="vip" onclick="sitTier('vip')">VIP<span class="buy">5000 chips · 15s</span></button>
+        <button type="button" class="tier" data-tier="bronze" onclick="sitTier('bronze')"><span class="tier-frame"><img src="tiers/bronze.jpg" alt=""></span><span class="tier-name">Bronze</span><span class="tier-stake">500 chips</span></button>
+        <button type="button" class="tier" data-tier="silver" onclick="sitTier('silver')"><span class="tier-frame"><img src="tiers/silver.jpg" alt=""></span><span class="tier-name">Silver</span><span class="tier-stake">1000 chips</span></button>
+        <button type="button" class="tier" data-tier="gold" onclick="sitTier('gold')"><span class="tier-frame"><img src="tiers/gold.jpg" alt=""></span><span class="tier-name">Gold</span><span class="tier-stake">2500 chips</span></button>
+        <button type="button" class="tier" data-tier="vip" onclick="sitTier('vip')"><span class="tier-frame"><img src="tiers/vip.jpg" alt=""></span><span class="tier-name">VIP</span><span class="tier-stake">5000 chips</span></button>
       </div>
       <p id="chipStatus"></p>
       <div id="openTables" class="open-tables"></div>
@@ -891,10 +930,14 @@ var cfg = null, seatToken = null, mySeat = null, roomCode = null, tickTimeout = 
 function api(path, body) {
   return fetch("/api/public/declare/" + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body || {})
   }).then(function(r) {
     return r.json().then(function(j) {
+      if (r.status === 401) {
+        saveAuth(null);
+        showSignedOut();
+      }
       if (!r.ok) throw new Error(j.error || "Request failed (" + r.status + ")");
       return j;
     });
@@ -967,12 +1010,19 @@ function subscribe() {
 
 window.addEventListener("pagehide", function() {
   if (mode === "online" && roomCode && mySeat !== null && seatToken) {
-    navigator.sendBeacon("/api/public/declare/leave", JSON.stringify({ code: roomCode, seat: mySeat, token: seatToken }));
+    fetch("/api/public/declare/leave", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ code: roomCode, seat: mySeat, token: seatToken }),
+      keepalive: true
+    }).catch(function() {});
   }
 });
 
 function playerName() {
-  return (document.getElementById("name").value || "Player").trim().slice(0, 16);
+  var typed = (document.getElementById("name").value || "").trim();
+  if (!typed && authUser && authUser.email) typed = String(authUser.email).split("@")[0];
+  return (typed || "Player").slice(0, 16);
 }
 function tierLabel(tier) {
   if (tier === "bronze") return "Bronze";
@@ -981,13 +1031,15 @@ function tierLabel(tier) {
   if (tier === "vip") return "VIP";
   return "Table";
 }
+var PLAYER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function ensurePlayerId() {
-  if (playerId) return playerId;
-  try { playerId = localStorage.getItem("declare-player-id"); } catch (e) { playerId = null; }
-  if (!playerId && window.crypto && crypto.randomUUID) playerId = crypto.randomUUID();
-  if (!playerId) playerId = "00000000-0000-4000-8000-" + String(Date.now()).slice(-12).padStart(12, "0");
-  try { localStorage.setItem("declare-player-id", playerId); } catch (e) {}
-  return playerId;
+  if (authUser && authUser.id && PLAYER_ID_RE.test(authUser.id)) {
+    playerId = authUser.id;
+    try { localStorage.setItem("declare-player-id", playerId); } catch (e) {}
+    return playerId;
+  }
+  playerId = null;
+  return null;
 }
 function setChipStatus(text) {
   var el = document.getElementById("chipStatus");
@@ -1072,7 +1124,7 @@ function renderOpenTables(tables) {
   });
 }
 function loadChipLobby() {
-  ensurePlayerId();
+  if (!ensurePlayerId()) return Promise.resolve();
   var seq = ++lobbySeq;
   return api("chips", { op: "lobby", playerId: playerId }).then(function(res) {
     if (seq !== lobbySeq) return;
@@ -1080,15 +1132,23 @@ function loadChipLobby() {
     renderOpenTables(res.tables || []);
   }).catch(function() {});
 }
+function playerChipError(message) {
+  if (!message || /schema cache|postgrest|PGRST|Could not find the table|declare_wallets/i.test(message)) {
+    return "Could not update chips.";
+  }
+  return message;
+}
 function claimBonus() {
-  ensurePlayerId();
+  if (!requirePlay()) return;
   api("chips", { op: "claim", playerId: playerId }).then(function(res) {
     if (res.wallet) showWallet(res.wallet);
     var hint = document.getElementById("claimHint");
-    if (hint && res.claimed) hint.textContent = "5000 chips added. The next 4 hours start now.";
+    if (!hint) return;
+    if (res.claimed) hint.textContent = "5000 chips added. The next 4 hours start now.";
+    else if (res.message) hint.textContent = res.message;
   }).catch(function(e) {
     var hint = document.getElementById("claimHint");
-    if (hint) hint.textContent = e.message;
+    if (hint) hint.textContent = playerChipError(e && e.message);
   });
 }
 function enterTable(res) {
@@ -1105,6 +1165,7 @@ function enterTable(res) {
   });
 }
 function sitTier(tier) {
+  if (!requirePlay()) return;
   err("");
   setChipStatus("");
   ensurePlayerId();
@@ -1113,6 +1174,7 @@ function sitTier(tier) {
   });
 }
 function sitCode(code) {
+  if (!requirePlay()) return;
   err("");
   setChipStatus("");
   ensurePlayerId();
@@ -1121,6 +1183,7 @@ function sitCode(code) {
   });
 }
 function createInvite() {
+  if (!requirePlay()) return;
   mode = "online";
   err("");
   var n = parseInt(document.getElementById("numPlayers").value, 10);
@@ -1135,6 +1198,7 @@ function createInvite() {
 }
 
 function joinInvite() {
+  if (!requirePlay()) return;
   mode = "online";
   err("");
   var code = document.getElementById("joinCode").value.trim().toUpperCase();
@@ -1259,7 +1323,7 @@ function chainOppTargets(c) {
 }
 function offTurnWindow(c) {
   if (!c || c.myTurn || c.pending || c.n !== 4 || !c.pileTop) return false;
-  if (c.phase === "act") return true;
+  if (c.phase === "act" || c.phase === "chain") return true;
   if (c.phase === "draw" && c.free) return true;
   return false;
 }
@@ -1296,7 +1360,7 @@ function legalMovesFrom(source) {
     }
     if (offTurnWindow(c) && source.zone === "hand" && source.p !== c.you && occupied(c, source.p, source.i)) {
       var seen = faceForMove(c, source.p, source.i);
-      if (seen && seen.r === c.pileTop.r) off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
+      if (seen) off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
     }
     return off;
   }
@@ -1307,7 +1371,7 @@ function legalMovesFrom(source) {
     if (c.phase === "act" && own.length) moves.push({ gesture: "swap", targets: own });
     if (c.phase === "draw" && c.free && own.length) moves.push({ gesture: "claim", targets: own });
     if (dumpWindow(c)) {
-      var opps = c.phase === "chain" ? chainOppTargets(c) : oppTargets(c);
+      var opps = oppTargets(c);
       if (opps.length) moves.push({ gesture: "dump", targets: opps });
     }
   }
@@ -1317,7 +1381,7 @@ function legalMovesFrom(source) {
     if (mine && (c.phase === "act" || (c.phase === "draw" && c.free && c.pileTop) || (c.phase === "pick" && c.intent === "discard" && c.pick.indexOf(key) >= 0))) {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
-    if (mine && c.phase === "chain" && c.pick.indexOf(key) >= 0) {
+    if (mine && c.phase === "chain") {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
     if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0) {
@@ -1349,7 +1413,7 @@ function dragHintFor(c) {
     return "Waiting for the other player.";
   }
   if (c.phase === "dumpGive") return "Drag one of your cards onto the empty slot.";
-  if (c.phase === "chain") return "Drag one matching card onto the center, or Pass.";
+  if (c.phase === "chain") return "Drag a card from your hand onto the center, or Pass.";
   if (c.phase === "power") {
     if (c.powerStep === "q-mine" || c.powerStep === "q-theirs") return "Drag one of your cards onto an opponent card to trade.";
     if (c.powerStep === "k-trade") return "Drag your peeked card onto theirs to trade, or Pass.";
@@ -1391,7 +1455,8 @@ function syncChrome(c, memorizing) {
 }
 function slotWantsPick(c, pid, i) {
   if (!c || !c.pick || c.pick.indexOf(pid + ":" + i) < 0) return false;
-  if (c.phase === "chain" || c.phase === "dumpGive" || c.phase === "pick") return true;
+  if (c.phase === "chain") return false;
+  if (c.phase === "dumpGive" || c.phase === "pick") return true;
   if (c.phase === "power" && c.powerStep !== "q-mine" && c.powerStep !== "q-theirs" && c.powerStep !== "k-trade") return true;
   return false;
 }
@@ -2003,6 +2068,7 @@ function endLocalMemorize() {
 }
 
 function deal(n) {
+  if (!requirePlay()) return;
   mode = "local";
   try {
     var deck = [];
@@ -3399,23 +3465,227 @@ document.addEventListener("keydown", function(e) {
   else if (e.key === "ArrowLeft") manualStep(-1);
 });
 window.onerror = function(msg) { err(msg); };
-(function boot() {
+var authUser = null;
+var authSession = null;
+var authMode = "in";
+var AUTH_KEY = "declare-auth";
+function signedIn() { return !!(authUser && authUser.id); }
+function requirePlay() {
+  if (signedIn()) return true;
+  showSignedOut();
+  return false;
+}
+function authHeaders() {
+  var headers = { "Content-Type": "application/json" };
+  if (authSession && authSession.access_token) headers.Authorization = "Bearer " + authSession.access_token;
+  return headers;
+}
+function saveAuth(session) {
+  authSession = session;
+  authUser = session && session.user ? { id: session.user.id, email: session.user.email || "" } : null;
+  try {
+    if (!session) localStorage.removeItem(AUTH_KEY);
+    else localStorage.setItem(AUTH_KEY, JSON.stringify(session));
+  } catch (e) {}
   ensurePlayerId();
+}
+function loadStoredAuth() {
+  try { authSession = JSON.parse(localStorage.getItem(AUTH_KEY) || "null"); } catch (e) { authSession = null; }
+  authUser = authSession && authSession.user && authSession.user.id ? { id: authSession.user.id, email: authSession.user.email || "" } : null;
+}
+function showSignedOut() {
+  var signin = document.getElementById("signin");
+  var setup = document.getElementById("setup");
+  var table = document.getElementById("table");
+  if (signin) signin.hidden = false;
+  if (setup) { setup.hidden = true; setup.style.display = "none"; }
+  if (table) table.style.display = "none";
+  var out = document.getElementById("signOutBtn");
+  var who = document.getElementById("signedInAs");
+  if (out) out.hidden = true;
+  if (who) { who.hidden = true; who.textContent = ""; }
+}
+function showSignedIn() {
+  var signin = document.getElementById("signin");
+  var setup = document.getElementById("setup");
+  if (signin) signin.hidden = true;
+  if (setup) { setup.hidden = false; setup.style.display = "block"; }
+  var out = document.getElementById("signOutBtn");
+  var who = document.getElementById("signedInAs");
+  if (out) out.hidden = false;
+  if (who) {
+    who.hidden = !authUser || !authUser.email;
+    who.textContent = authUser && authUser.email ? authUser.email : "";
+  }
+  var name = document.getElementById("name");
+  if (name && !name.value && authUser && authUser.email) name.value = String(authUser.email).split("@")[0].slice(0, 16);
+}
+function authMessage(text) {
+  var el = document.getElementById("authMsg");
+  if (el) el.textContent = text || "";
+}
+function toggleAuthMode() {
+  authMode = authMode === "in" ? "up" : "in";
+  var submit = document.getElementById("authSubmit");
+  var swap = document.getElementById("authSwitch");
+  var password = document.getElementById("authPassword");
+  if (submit) submit.textContent = authMode === "in" ? "Sign in" : "Create account";
+  if (swap) swap.textContent = authMode === "in" ? "Create an account" : "Already have an account";
+  if (password) password.setAttribute("autocomplete", authMode === "in" ? "current-password" : "new-password");
+  authMessage("");
+}
+function sessionFromToken(body) {
+  if (!body || !body.access_token || !body.user || !body.user.id) return null;
+  return body;
+}
+function authFetch(path, options) {
+  var headers = Object.assign({ apikey: cfg.key, "Content-Type": "application/json" }, (options && options.headers) || {});
+  return fetch(cfg.url.replace(/\/$/, "") + "/auth/v1/" + path, {
+    method: (options && options.method) || "POST",
+    headers: headers,
+    body: options && options.body
+  }).then(function(r) {
+    return r.json().catch(function() { return {}; }).then(function(j) {
+      if (!r.ok) throw new Error(j.msg || j.error_description || j.error || "Sign-in failed.");
+      return j;
+    });
+  });
+}
+function refreshAuth() {
+  if (!authSession || !authSession.refresh_token || !cfg) return Promise.resolve(signedIn());
+  var fresh = !authSession.expires_at || authSession.expires_at * 1000 > Date.now() + 15000;
+  if (fresh && signedIn()) return Promise.resolve(true);
+  return authFetch("token?grant_type=refresh_token", { body: JSON.stringify({ refresh_token: authSession.refresh_token }) }).then(function(body) {
+    var session = sessionFromToken(body);
+    if (!session) { saveAuth(null); return false; }
+    saveAuth(session);
+    return true;
+  }).catch(function() { saveAuth(null); return false; });
+}
+function submitAuth(event) {
+  if (event && event.preventDefault) event.preventDefault();
+  var email = (document.getElementById("authEmail").value || "").trim();
+  var password = document.getElementById("authPassword").value || "";
+  authMessage("");
+  ensureWs(function() {
+    var path = authMode === "up" ? "signup" : "token?grant_type=password";
+    var body = authMode === "up" ? { email: email, password: password } : { email: email, password: password };
+    authFetch(path, { body: JSON.stringify(body) }).then(function(res) {
+      var session = sessionFromToken(res);
+      if (session) {
+        saveAuth(session);
+        enterSignedIn();
+        return;
+      }
+      if (authMode === "up") authMessage("Check your email to confirm the account, then sign in.");
+      else authMessage("Sign-in did not return a session.");
+    }).catch(function(e) {
+      var msg = e.message || "Sign-in failed.";
+      if (/email_provider_disabled|Email signups are disabled|Email logins are disabled/i.test(msg)) msg = "Email sign-in is not available on this project.";
+      authMessage(msg);
+    });
+  });
+  return false;
+}
+function bytesToBase64Url(bytes) {
+  var str = "";
+  for (var i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function googleSignIn() {
+  if (!cfg || !cfg.google) return;
+  ensureWs(function() {
+    var bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    var verifier = bytesToBase64Url(bytes);
+    sessionStorage.setItem("declare-pkce", verifier);
+    crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)).then(function(digest) {
+      var challenge = bytesToBase64Url(new Uint8Array(digest));
+      var redirect = location.origin + location.pathname;
+      location.href = cfg.url.replace(/\/$/, "") + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(redirect) + "&code_challenge=" + encodeURIComponent(challenge) + "&code_challenge_method=s256";
+    }).catch(function() { authMessage("Google sign-in could not start."); });
+  });
+}
+function finishAuthRedirect() {
+  var params = new URLSearchParams(location.search);
+  var code = params.get("code");
+  var hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
+  var access = hash.get("access_token");
+  if (!code && !access) return Promise.resolve();
+  if (access) {
+    var session = {
+      access_token: access,
+      refresh_token: hash.get("refresh_token"),
+      expires_at: Number(hash.get("expires_at")) || null,
+      user: { id: hash.get("user_id") || "", email: "" }
+    };
+    if (window.history && window.history.replaceState) window.history.replaceState(null, "", location.pathname + location.search.replace(/[?&]code=[^&]*/, ""));
+    if (!session.user.id) return authFetch("user", { method: "GET", headers: { Authorization: "Bearer " + access } }).then(function(user) {
+      session.user = { id: user.id, email: user.email || "" };
+      saveAuth(session);
+    }).catch(function() { authMessage("Sign-in could not be finished."); });
+    saveAuth(session);
+    return Promise.resolve();
+  }
+  var verifier = sessionStorage.getItem("declare-pkce");
+  sessionStorage.removeItem("declare-pkce");
+  if (!verifier) return Promise.resolve();
+  return authFetch("token?grant_type=pkce", { body: JSON.stringify({ auth_code: code, code_verifier: verifier }) }).then(function(body) {
+    var session = sessionFromToken(body);
+    if (session) saveAuth(session);
+    if (window.history && window.history.replaceState) window.history.replaceState(null, "", location.pathname);
+  }).catch(function(e) { authMessage(e.message || "Google sign-in failed."); });
+}
+function applyAuthProviders() {
+  var google = document.getElementById("googleBtn");
+  if (google) google.hidden = !(cfg && cfg.google);
+}
+function enterSignedIn() {
+  showSignedIn();
   loadChipLobby();
-  if (lobbyTimer) clearInterval(lobbyTimer);
-  lobbyTimer = setInterval(function() {
-    var setup = document.getElementById("setup");
-    if (!setup || setup.style.display === "none") return;
-    if (mode === "online" && roomCode) return;
-    loadChipLobby();
-  }, 4000);
-  if (claimTicker) clearInterval(claimTicker);
-  claimTicker = setInterval(paintClaim, 1000);
   var join = new URLSearchParams(location.search).get("join");
   if (join) {
     document.getElementById("joinCode").value = join.toUpperCase();
     document.getElementById("choice").textContent = "Code " + join.toUpperCase() + " loaded — enter your name and click Join.";
   }
+}
+function signOut() {
+  var wasOnline = mode === "online" && roomCode && mySeat !== null && seatToken;
+  var code = roomCode, seat = mySeat, token = seatToken;
+  if (wasOnline) {
+    fetch("/api/public/declare/leave", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ code: code, seat: seat, token: token }),
+      keepalive: true
+    }).catch(function() {});
+  }
+  if (authSession && authSession.access_token && cfg) {
+    authFetch("logout", { method: "POST", headers: { Authorization: "Bearer " + authSession.access_token } }).catch(function() {});
+  }
+  saveAuth(null);
+  returnToSetup();
+  showSignedOut();
+}
+(function boot() {
+  loadStoredAuth();
+  showSignedOut();
+  if (lobbyTimer) clearInterval(lobbyTimer);
+  lobbyTimer = setInterval(function() {
+    var setup = document.getElementById("setup");
+    if (!signedIn() || !setup || setup.hidden || setup.style.display === "none") return;
+    if (mode === "online" && roomCode) return;
+    loadChipLobby();
+  }, 4000);
+  if (claimTicker) clearInterval(claimTicker);
+  claimTicker = setInterval(paintClaim, 1000);
+  ensureWs(function() {
+    applyAuthProviders();
+    refreshAuth().then(function() { return finishAuthRedirect(); }).then(function() {
+      if (!signedIn()) { showSignedOut(); return; }
+      enterSignedIn();
+    });
+  });
 })();
 </script>
 </body>

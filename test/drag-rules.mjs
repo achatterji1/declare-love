@@ -298,7 +298,7 @@ function testChainTargetsAreMatchesOnly() {
   assert.ok(pick.includes("0:2"), "own remaining queen stays a discard target");
   assert.ok(pick.includes("1:1"), "matching opponent queen is a dump target");
   assert.equal(pick.includes("1:0"), false, "non-matching opponent card is not a drop target");
-  assert.deepEqual(publicState(room, 0).pick, room.G.pick);
+  assert.deepEqual(publicState(room, 0).pick, [], "the client is not told which cards match");
   assert.equal(handleAction(room, 0, { action: "drag", gesture: "dump", p: 1, i: 0 }), false);
   assert.equal(room.G.phase, "chain");
   assert.equal(room.G.players[1].slots[0].r, "K");

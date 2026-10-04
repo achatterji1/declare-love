@@ -5,6 +5,7 @@ import {
   applyClaim,
   humanDisplayName,
   isTier,
+  nextClaimMessage,
   type Tier,
   type Wallet,
 } from "./declare-chips";
@@ -41,7 +42,13 @@ export async function claimBonus(playerId: string, now = Date.now()) {
     const wallet = await loadWallet(opened.id);
     if (!wallet) throw new Error("Wallet not found.");
     const result = applyClaim(wallet, now);
-    if (!result.claimed) return { wallet: walletView(wallet, now), claimed: false };
+    if (!result.claimed) {
+      return {
+        wallet: walletView(wallet, now),
+        claimed: false,
+        message: nextClaimMessage(wallet.claimAvailableAt, now),
+      };
+    }
     result.wallet.version = wallet.version;
     try {
       await saveWallet(result.wallet);

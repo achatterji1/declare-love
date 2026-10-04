@@ -1,16 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { authConfig } from "@/lib/declare-auth.server";
 
 export const Route = createFileRoute("/api/public/declare/config")({
   server: {
     handlers: {
       GET: async () => {
-        const url = process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"];
-        const key =
-          process.env["SUPABASE_PUBLISHABLE_KEY"] ?? process.env["VITE_SUPABASE_PUBLISHABLE_KEY"];
-        if (!url || !key) {
-          return Response.json({ error: "Realtime not configured." }, { status: 500 });
+        try {
+          return Response.json(await authConfig());
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Realtime not configured.";
+          return Response.json({ error: msg }, { status: 500 });
         }
-        return Response.json({ url, key });
       },
     },
   },

@@ -544,7 +544,7 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     free: G.free,
     declarer: G.declarer,
     intent: G.intent,
-    pick: G.pick,
+    pick: G.phase === "chain" ? [] : G.pick,
     power: G.power || null,
     powerStep: G.powerStep || null,
     chainRank: G.chainRank || null,
@@ -1086,7 +1086,14 @@ function completeDumpGive(room: Room, giveI: number, now = Date.now()): void {
   const oppName = G.players[dg.oppPid].name;
   G.dumpGive = null;
   if (dg.offTurn) {
+    const consumedDraw = dg.resumePhase === "act" || dg.resumePhase === "chain";
     G.log = "Gave a card to " + oppName + ".";
+    if (consumedDraw) {
+      G.dumpGive = null;
+      G.free = true;
+      G.phase = "draw";
+      return finish(room);
+    }
     restoreOffTurn(room, dg, now);
     return;
   }
@@ -1101,6 +1108,11 @@ function autoGiveOffTurn(room: Room, now: number): void {
   const giveI = G.players[dg.actor].slots.findIndex((c) => !!c);
   if (giveI < 0) {
     G.log = "No card left to give.";
+    if (dg.resumePhase === "act" || dg.resumePhase === "chain") {
+      G.dumpGive = null;
+      G.free = true;
+      return finish(room);
+    }
     restoreOffTurn(room, dg, now);
     return;
   }
@@ -1109,7 +1121,7 @@ function autoGiveOffTurn(room: Room, now: number): void {
 
 function offTurnWindow(G: Game): boolean {
   if (G.n !== 4 || G.pending) return false;
-  if (G.phase === "act") return !!pileTop(G);
+  if (G.phase === "act" || G.phase === "chain") return !!pileTop(G);
   if (G.phase === "draw" && G.free) return !!pileTop(G);
   return false;
 }
