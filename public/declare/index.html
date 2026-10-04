@@ -63,12 +63,12 @@
     box-shadow: none;
     transition: background .16s ease, transform .16s ease, border-color .16s ease;
   }
-  button:hover:not(:disabled) {
+  button:hover:not(:disabled):not(.card) {
     background: var(--panel-soft);
     border-color: var(--sand);
     transform: translateY(-1px);
   }
-  button:active:not(:disabled) { transform: translateY(0); }
+  button:active:not(:disabled):not(.card) { transform: translateY(0); }
   input { cursor: text; width: 100%; background: var(--panel); }
   input:focus { outline: 3px solid color-mix(in srgb, var(--olive) 20%, transparent); border-color: var(--olive); }
   button:disabled { opacity: .42; cursor: default; box-shadow: none; }
