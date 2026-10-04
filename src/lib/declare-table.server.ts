@@ -1,11 +1,13 @@
-import { joinChipSeat, makeCode, publicState, type Room } from "./declare-engine";
+import { joinChipSeat, leaveSeat, makeCode, publicState, startGame, type Room } from "./declare-engine";
 import {
   TIERS,
   applyBuyIn,
   applyClaim,
+  applyPaidStakes,
   humanDisplayName,
   isTier,
   nextClaimMessage,
+  seatsOwingBuyIn,
   type Tier,
   type Wallet,
 } from "./declare-chips";
@@ -131,12 +133,73 @@ async function freshTable(tier: Tier): Promise<Room> {
   return room;
 }
 
+async function releaseLobbySeats(playerId: string, keepCode?: string): Promise<void> {
+  const rooms = await listLobbyRooms();
+  for (const room of rooms) {
+    if (!room.tier || room.code === keepCode) continue;
+    if (!room.seats.some((seat) => seat && seat.playerId === playerId)) continue;
+    await mutateRoom(room.code, (found) => {
+      if (found.status !== "lobby") return;
+      const idx = found.seats.findIndex((seat) => seat && seat.playerId === playerId);
+      if (idx >= 0) leaveSeat(found, idx);
+    });
+  }
+}
+
+// The seat is already saved. Charge every human who has not paid, then deal.
+// A failure before the hand is saved refunds those charges and leaves the
+// table in the lobby.
+async function startHandIfFull(code: string): Promise<void> {
+  const preview = await loadRoom(code);
+  if (!preview || preview.status !== "lobby" || !preview.tier || preview.seats.some((seat) => !seat)) return;
+  const owed = seatsOwingBuyIn(preview);
+  for (const row of owed) {
+    const wallet = await loadWallet(row.playerId);
+    if (!wallet || wallet.chips < row.amount) return;
+  }
+  const debited: { playerId: string; seat: number; amount: number }[] = [];
+  try {
+    for (const row of owed) {
+      await debit(row.playerId, row.amount);
+      debited.push(row);
+    }
+    await mutateRoom(code, (room) => {
+      if (room.status !== "lobby" || !room.tier) throw new Error("That hand already started.");
+      if (room.seats.some((seat) => !seat)) throw new Error("Waiting for players.");
+      for (const row of debited) {
+        const seat = room.seats[row.seat];
+        if (!seat || seat.playerId !== row.playerId) throw new Error("Waiting for players.");
+      }
+      applyPaidStakes(room, debited);
+      if (seatsOwingBuyIn(room).length) throw new Error("Waiting for players.");
+      startGame(room);
+    });
+  } catch (e) {
+    const latest = await loadRoom(code);
+    const started = !!latest && (latest.status === "playing" || latest.status === "ended");
+    if (!started) {
+      for (const row of debited) {
+        await creditWalletOnce(
+          row.playerId,
+          row.amount,
+          "refund-wait:" + code + ":" + row.playerId + ":" + row.seat + ":" + crypto.randomUUID(),
+        ).catch(() => {});
+      }
+    }
+    const msg = e instanceof Error ? e.message : "";
+    if (started || msg === "Waiting for players." || msg === "That hand already started.") return;
+    throw e;
+  }
+}
+
 export async function sitDown(input: { playerId: string; name: string; tier?: string; code?: string }) {
   const opened = await getOrCreateWallet(input.playerId);
   const playerId = opened.id;
-  const wallet = await loadWallet(playerId);
-  if (!wallet) throw new Error("Wallet not found.");
-  let code = (input.code || "").trim().toUpperCase();
+  const requested = (input.code || "").trim().toUpperCase();
+  await releaseLobbySeats(playerId, requested || undefined);
+  const funds = await loadWallet(playerId);
+  if (!funds) throw new Error("Wallet not found.");
+  let code = requested;
   let tier: Tier | null = null;
   if (code) {
     const found = await loadRoom(code);
@@ -150,6 +213,7 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
   } else {
     if (!input.tier || !isTier(input.tier)) throw new Error("Choose Bronze, Silver, Gold, or VIP.");
     tier = input.tier;
+    if (funds.chips < TIERS[tier].buyIn) throw new Error("You cannot afford the buy-in.");
     const open = (await listLobbyRooms()).find(
       (room) =>
         room.tier === tier &&
@@ -160,29 +224,39 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
     if (open) code = open.code;
     else code = (await freshTable(tier)).code;
   }
+  const wallet = await loadWallet(playerId);
+  if (!wallet) throw new Error("Wallet not found.");
   const buyIn = TIERS[tier].buyIn;
   if (wallet.chips < buyIn) throw new Error("You cannot afford the buy-in.");
   const token = crypto.randomUUID();
   const name = humanDisplayName(input.name);
-  await debit(playerId, buyIn);
+  let seat = -1;
   try {
-    const { room, result } = await mutateRoom(code, (room) => {
+    const seated = await mutateRoom(code, (room) => {
       if (room.tier !== tier) throw new Error("That table is not open.");
-      const seat = joinChipSeat(room, { name, token, playerId });
-      return { seat, token };
+      const idx = joinChipSeat(room, { name, token, playerId });
+      return { seat: idx, filled: room.status === "lobby" && room.seats.every(Boolean) };
     });
-    const updated = await loadWallet(playerId);
-    return {
-      code,
-      seat: result.seat,
-      token: result.token,
-      state: publicState(room, result.seat),
-      wallet: updated ? walletView(updated) : null,
-    };
+    seat = seated.result.seat;
+    if (seated.result.filled) await startHandIfFull(code);
   } catch (e) {
-    await creditWalletOnce(playerId, buyIn, "refund-sit:" + token);
+    await mutateRoom(code, (room) => {
+      if (room.status !== "lobby") return;
+      const idx = room.seats.findIndex((slot) => slot && slot.token === token);
+      if (idx >= 0) leaveSeat(room, idx);
+    }).catch(() => {});
     throw e;
   }
+  const latest = await loadRoom(code);
+  const updated = await loadWallet(playerId);
+  if (!latest || seat < 0) throw new Error("Room not found.");
+  return {
+    code,
+    seat,
+    token,
+    state: publicState(latest, seat),
+    wallet: updated ? walletView(updated) : null,
+  };
 }
 
 export async function chargeNextHand(room: Room): Promise<{ playerId: string; seat: number; amount: number }[]> {

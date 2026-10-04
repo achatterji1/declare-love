@@ -134,6 +134,8 @@
   .tier-name { margin-top: 10px; font-family: "Playfair Display", serif; font-size: 1.02rem; font-weight: 600; color: var(--ink); }
   .tier-stake { margin-top: 2px; color: var(--muted); font-size: .68rem; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
   #chipStatus { color: var(--olive-dark); font-weight: 650; min-height: 1.2em; }
+  #waitingLeave { margin: 4px 0 14px; }
+  #leaveWait { min-width: 140px; }
   .open-tables { display: grid; gap: 8px; margin: 8px 0 16px; }
   .table-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
   .table-row div { color: var(--muted); }
@@ -493,6 +495,9 @@
         <button type="button" class="tier" data-tier="vip" onclick="sitTier('vip')"><span class="tier-frame"><img src="tiers/vip.jpg" alt=""></span><span class="tier-name">VIP</span><span class="tier-stake">5000 chips</span></button>
       </div>
       <p id="chipStatus"></p>
+      <div id="waitingLeave" hidden>
+        <button type="button" id="leaveWait" onclick="doQuit()">Leave</button>
+      </div>
       <div id="openTables" class="open-tables"></div>
     </section>
     <p id="choice">Four cards selected — choose a table to begin.</p>
@@ -1056,6 +1061,12 @@ function ensurePlayerId() {
 function setChipStatus(text) {
   var el = document.getElementById("chipStatus");
   if (el) el.textContent = text || "";
+}
+function syncLeaveButton(show) {
+  var el = document.getElementById("waitingLeave");
+  if (!el) return;
+  el.hidden = !show;
+  if (show && el.scrollIntoView) el.scrollIntoView({ block: "center" });
 }
 function paintTiers() {
   var buttons = document.querySelectorAll(".tier-row button[data-tier]");
@@ -1927,7 +1938,7 @@ function renderOnline() {
   var inviteLink = document.getElementById("inviteLink");
   if (online.tier) {
     inviteLink.textContent = online.waiting
-      ? "Friends can sit from the chip lobby until the hand starts. The buy-in comes out of their wallet."
+      ? "Friends can sit from the chip lobby until the hand starts. The buy-in comes out when the hand starts."
       : "This hand is closed. A player who leaves is out, and that seat stays empty.";
   }
   else inviteLink.innerHTML = 'Send this link: <a href="' + link + '" style="color:#d96f58">' + link + "</a>";
@@ -1943,11 +1954,13 @@ function renderOnline() {
     document.getElementById("lobby").textContent = "Lobby (" + (online.n || 2) + " seats): " + seats;
     if (online.tier) {
       var seated = (online.players || []).filter(function(p) { return p.ready && !p.vacant; }).length;
-      setChipStatus(tierLabel(online.tier) + " table " + (online.code || "") + ". Buy-in " + (online.buyIn || 0) + " is in the pot (" + (online.pot || 0) + "). Waiting for players (" + seated + "/4).");
-    }
+      setChipStatus(tierLabel(online.tier) + " table " + (online.code || "") + ". Buy-in " + (online.buyIn || 0) + " comes out when the hand starts. Waiting for players (" + seated + "/4).");
+      syncLeaveButton(true);
+    } else syncLeaveButton(false);
     paintChipBar();
     return;
   }
+  syncLeaveButton(false);
   document.getElementById("setup").style.display = "none";
   document.getElementById("table").style.display = "block";
   var you = online.you;
@@ -2045,7 +2058,7 @@ function doPass() {
   if (G.phase === "power" && G.powerStep === "k-trade") return skipKingTrade();
   requestChoice("pass");
 }
-function returnToSetup() {
+function returnToSetup(skipLobby) {
   cancelDrag();
   stopMemorizeTicker();
   stopActTicker();
@@ -2089,12 +2102,13 @@ function returnToSetup() {
   wiggleSeen = {};
   turnTimerSuffix = "to move";
   setChipStatus("");
-  loadChipLobby();
+  syncLeaveButton(false);
+  if (!skipLobby) loadChipLobby();
   if (setup && setup.scrollIntoView) setup.scrollIntoView();
 }
 function doQuit() {
   var code = roomCode, seat = mySeat, token = seatToken, wasOnline = mode === "online" && roomCode && mySeat !== null && seatToken;
-  returnToSetup();
+  returnToSetup(!!wasOnline);
   if (wasOnline) api("leave", { code: code, seat: seat, token: token }).then(function() { loadChipLobby(); }).catch(function() { loadChipLobby(); });
 }
 function doClaim() { requestChoice("claim"); }

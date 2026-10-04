@@ -177,8 +177,9 @@ function awardPot(room: Room, scores: number[]): number {
   return pot;
 }
 
-// A chip table takes players only in the lobby. Once the hand starts, the
-// roster is closed: a quit seat stays empty, and nobody is dealt into that hand.
+// A chip table takes players only in the lobby. Sitting does not take the
+// buy-in; that happens when the hand starts. Once the hand starts, the roster
+// is closed: a quit seat stays empty, and nobody is dealt into that hand.
 export function joinChipSeat(
   room: Room,
   person: { name: string; token: string; playerId: string },
@@ -189,39 +190,45 @@ export function joinChipSeat(
   }
   const idx = room.seats.findIndex((seat) => !seat);
   if (idx < 0) throw new Error("That table is full.");
-  const buyIn = room.buyIn || 0;
   room.seats[idx] = {
     name: person.name,
     token: person.token,
     playerId: person.playerId,
     computer: false,
   };
-  room.pot = (room.pot || 0) + buyIn;
-  room.stakes = [...(room.stakes || []), { playerId: person.playerId, seat: idx, amount: buyIn }];
-  if (room.seats.every(Boolean)) startGame(room);
   return idx;
 }
 
-// Lobby leave refunds that one buy-in. A chip seat that leaves after the hand
-// starts forfeits that buy-in and stays empty. The hand goes on with the
-// people still sitting.
+// Lobby leave returns that seat's buy-in when it was already taken, and does
+// not forfeit. A chip seat that leaves after the hand starts forfeits that
+// buy-in and stays empty. The hand goes on with the people still sitting.
 export function leaveSeat(room: Room, seat: number): void {
   const sitting = room.seats[seat];
   if (!sitting || sitting.computer) return;
   if (room.status === "lobby") {
-    const stake = (room.stakes || []).find((row) => row.seat === seat && row.playerId === sitting.playerId);
     room.seats[seat] = null;
-    if (stake) {
-      room.stakes = (room.stakes || []).filter((row) => row !== stake);
-      room.pot = Math.max(0, (room.pot || 0) - stake.amount);
-      room.payouts = [
-        {
-          playerId: stake.playerId,
-          amount: stake.amount,
-          key: room.code + ":leave:" + seat + ":" + room.version + ":" + stake.amount,
-        },
-      ];
+    const stakes = room.stakes || [];
+    const humansLeft = room.seats.some((slot) => slot && !slot.computer);
+    const chipTable = !!room.tier;
+    const clearTable = !humansLeft && chipTable;
+    const refunds = (clearTable ? stakes : stakes.filter((row) => row.seat === seat && row.playerId === sitting.playerId))
+      .filter((row) => row.amount > 0 && row.playerId && !row.forfeited);
+    if (clearTable) {
+      room.seats = room.seats.map(() => null);
+      room.stakes = [];
+      room.pot = 0;
+      room.status = "abandoned";
+    } else {
+      room.stakes = stakes.filter((row) => !refunds.includes(row));
+      room.pot = (room.stakes || []).reduce((sum, row) => sum + row.amount, 0);
     }
+    if (refunds.length) {
+      room.payouts = refunds.map((stake) => ({
+        playerId: stake.playerId,
+        amount: stake.amount,
+        key: room.code + ":leave:" + stake.seat + ":" + room.version + ":" + stake.playerId + ":" + stake.amount,
+      }));
+    } else if (clearTable) room.payouts = null;
     return;
   }
   if (room.tier) {
