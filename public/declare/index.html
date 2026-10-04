@@ -137,8 +137,10 @@
   #waitingLeave { margin: 4px 0 14px; }
   #leaveWait { min-width: 140px; }
   .open-tables { display: grid; gap: 8px; margin: 8px 0 16px; }
-  .table-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .table-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
   .table-row div { color: var(--muted); }
+  .table-actions { display: flex; gap: 8px; flex: none; align-items: center; }
+  .table-actions button { margin: 0; }
   .card.remembered { box-shadow: inset 0 0 0 2px var(--olive); }
   #chipBar { margin: 0 0 8px; color: var(--olive-dark); font-weight: 700; }
   .players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -1137,12 +1139,22 @@ function renderOpenTables(tables) {
       seats.appendChild(span);
     });
     info.appendChild(seats);
+    var actions = document.createElement("div");
+    actions.className = "table-actions";
+    if (table.yours) {
+      var leave = document.createElement("button");
+      leave.type = "button";
+      leave.textContent = "Leave";
+      leave.onclick = function() { leaveCode(table.code); };
+      actions.appendChild(leave);
+    }
     var btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "Join";
     btn.onclick = function() { sitCode(table.code); };
+    actions.appendChild(btn);
     row.appendChild(info);
-    row.appendChild(btn);
+    row.appendChild(actions);
     box.appendChild(row);
   });
 }
@@ -1204,6 +1216,21 @@ function sitCode(code) {
   ensurePlayerId();
   api("chips", { op: "sit", playerId: playerId, name: playerName(), code: code }).then(enterTable).catch(function(e) {
     setChipStatus(e.message);
+  });
+}
+function leaveCode(code) {
+  if (!requirePlay()) return;
+  err("");
+  setChipStatus("");
+  ensurePlayerId();
+  var same = !!(roomCode && String(roomCode).toUpperCase() === String(code || "").toUpperCase());
+  api("chips", { op: "leave", playerId: playerId, code: code }).then(function(res) {
+    if (res.wallet) showWallet(res.wallet);
+    if (same && mode === "online") returnToSetup();
+    else loadChipLobby();
+  }).catch(function(e) {
+    setChipStatus(playerChipError(e && e.message));
+    loadChipLobby();
   });
 }
 function createInvite() {

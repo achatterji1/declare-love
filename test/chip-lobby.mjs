@@ -11,7 +11,7 @@ import {
   mutateRoom,
   saveWallet,
 } from "../src/lib/declare-store.server.ts";
-import { sitDown } from "../src/lib/declare-table.server.ts";
+import { leaveLobbySeat, listTables, sitDown } from "../src/lib/declare-table.server.ts";
 
 if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Refusing to run chip lobby tests against a live database.");
@@ -135,10 +135,191 @@ async function testBrokePlayerIsNotSeated() {
   assert.equal(held.length, 0);
 }
 
+async function testLobbyListLeaveKeepsAnUnchargedWallet() {
+  const player = id();
+  const other = id();
+  const sat = await sitDown({ playerId: player, name: "Ann", tier: "bronze" });
+  const listed = await listTables(player);
+  const row = listed.tables.find((table) => table.code === sat.code);
+  assert.ok(row);
+  assert.equal(row.yours, true);
+  assert.equal(listed.wallet.chips, 10000);
+  const stranger = await listTables(other);
+  assert.equal(stranger.tables.find((table) => table.code === sat.code).yours, false);
+  const left = await leaveLobbySeat({ playerId: player, code: sat.code });
+  assert.equal(left.wallet.chips, 10000);
+  assert.equal((await loadWallet(player)).chips, 10000);
+  const gone = await loadRoom(sat.code);
+  assert.equal(gone.status, "abandoned");
+  assert.equal(gone.pot, 0);
+  assert.equal(gone.stakes.length, 0);
+  assert.equal((await listTables(player)).tables.some((table) => table.code === sat.code), false);
+}
+
+async function testLobbyListLeaveRefundsARecordedStake() {
+  const player = id();
+  const created = await getOrCreateWallet(player);
+  created.chips = 14500;
+  await saveWallet(created);
+  await insertRoom({
+    code: "PH8Q",
+    n: 4,
+    cardsN: 4,
+    seats: [{ name: "arpan9879", token: "lost-on-refresh", playerId: player }, null, null, null],
+    status: "lobby",
+    G: null,
+    version: 2,
+    tier: "bronze",
+    pot: 500,
+    buyIn: 500,
+    actMs: 30000,
+    stakes: [{ playerId: player, seat: 0, amount: 500 }],
+    payouts: null,
+  });
+  const listed = await listTables(player);
+  const row = listed.tables.find((table) => table.code === "PH8Q");
+  assert.equal(row.yours, true);
+  assert.equal(row.pot, 500);
+  assert.equal(row.buyIn, 500);
+  assert.equal(listed.wallet.chips, 14500);
+  const left = await leaveLobbySeat({ playerId: player, code: "ph8q" });
+  assert.equal(left.wallet.chips, 15000);
+  const gone = await loadRoom("PH8Q");
+  assert.equal(gone.status, "abandoned");
+  assert.equal(gone.pot, 0);
+  assert.equal(gone.stakes.length, 0);
+  assert.ok(gone.seats.every((seat) => seat == null));
+  assert.equal((await listTables(player)).tables.some((table) => table.code === "PH8Q"), false);
+}
+
+async function testReenterWaitingViewThenLeaveKeepsTheWallet() {
+  const player = id();
+  const created = await getOrCreateWallet(player);
+  created.chips = 0;
+  await saveWallet(created);
+  await insertRoom({
+    code: "BACK",
+    n: 4,
+    cardsN: 4,
+    seats: [{ name: "Ann", token: "keep-me", playerId: player }, null, null, null],
+    status: "lobby",
+    G: null,
+    version: 1,
+    tier: "silver",
+    pot: 0,
+    buyIn: 1000,
+    actMs: 30000,
+    stakes: [],
+    payouts: null,
+  });
+  const again = await sitDown({ playerId: player, name: "Ann", code: "BACK" });
+  assert.equal(again.code, "BACK");
+  assert.equal(again.seat, 0);
+  assert.equal(again.token, "keep-me");
+  assert.equal(again.state.waiting, true);
+  assert.equal(again.wallet.chips, 0);
+  assert.equal((await loadRoom("BACK")).pot, 0);
+  assert.equal((await loadRoom("BACK")).stakes.length, 0);
+  assert.equal((await loadRoom("BACK")).seats.filter(Boolean).length, 1);
+  await mutateRoom(again.code, (room) => leaveSeat(room, again.seat));
+  assert.equal((await loadWallet(player)).chips, 0);
+  assert.equal((await loadRoom("BACK")).status, "abandoned");
+  assert.equal((await listTables(player)).tables.some((table) => table.code === "BACK"), false);
+}
+
+async function testReenterRefundsARecordedStakeFromTheWaitingView() {
+  const player = id();
+  const created = await getOrCreateWallet(player);
+  created.chips = 14500;
+  await saveWallet(created);
+  await insertRoom({
+    code: "WAIT",
+    n: 4,
+    cardsN: 4,
+    seats: [{ name: "Ann", token: "seat-tok", playerId: player }, null, null, null],
+    status: "lobby",
+    G: null,
+    version: 1,
+    tier: "bronze",
+    pot: 500,
+    buyIn: 500,
+    actMs: 30000,
+    stakes: [{ playerId: player, seat: 0, amount: 500 }],
+    payouts: null,
+  });
+  const again = await sitDown({ playerId: player, name: "Ann", code: "WAIT" });
+  assert.equal(again.state.waiting, true);
+  assert.equal(again.seat, 0);
+  assert.equal(again.token, "seat-tok");
+  assert.equal(again.wallet.chips, 14500);
+  assert.equal((await loadRoom("WAIT")).pot, 500);
+  assert.equal((await loadRoom("WAIT")).stakes.length, 1);
+  await mutateRoom(again.code, (room) => leaveSeat(room, again.seat));
+  assert.equal((await loadWallet(player)).chips, 15000);
+  const gone = await loadRoom("WAIT");
+  assert.equal(gone.status, "abandoned");
+  assert.equal(gone.pot, 0);
+  assert.equal(gone.stakes.length, 0);
+  assert.equal((await listTables(player)).tables.some((table) => table.code === "WAIT"), false);
+}
+
+async function testLobbyLeaveKeepsATableThatStillHasSomeone() {
+  const ann = id();
+  const bo = id();
+  const first = await sitDown({ playerId: ann, name: "Ann", tier: "gold" });
+  const second = await sitDown({ playerId: bo, name: "Bo", code: first.code });
+  assert.equal(second.state.waiting, true);
+  assert.equal((await loadWallet(ann)).chips, 10000);
+  await leaveLobbySeat({ playerId: ann, code: first.code });
+  const room = await loadRoom(first.code);
+  assert.equal(room.status, "lobby");
+  assert.equal(room.pot, 0);
+  assert.equal(room.seats[second.seat].playerId, bo);
+  assert.equal(room.seats.filter(Boolean).length, 1);
+  assert.equal((await loadWallet(ann)).chips, 10000);
+  assert.equal((await loadWallet(bo)).chips, 10000);
+  const listed = await listTables(bo);
+  const row = listed.tables.find((table) => table.code === first.code);
+  assert.equal(row.yours, true);
+  assert.equal(row.openSeats, 3);
+}
+
+async function testStartedHandStillForfeitsAndLobbyLeaveRefuses() {
+  const players = [id(), id(), id(), id()];
+  let code = "";
+  for (let i = 0; i < 4; i++) {
+    const sat = await sitDown({ playerId: players[i], name: "P" + i, tier: "vip" });
+    code = sat.code;
+  }
+  assert.equal((await loadRoom(code)).status, "playing");
+  assert.equal((await loadWallet(players[0])).chips, 5000);
+  await assert.rejects(leaveLobbySeat({ playerId: players[0], code }), /already started/);
+  await assert.rejects(sitDown({ playerId: players[0], name: "P0", code }), /already started/);
+  const still = await loadRoom(code);
+  assert.equal(still.status, "playing");
+  assert.equal(still.pot, 20000);
+  assert.equal(still.seats[0].playerId, players[0]);
+  assert.ok(!still.stakes.find((stake) => stake.playerId === players[0]).forfeited);
+  assert.equal((await loadWallet(players[0])).chips, 5000);
+  await mutateRoom(code, (room) => leaveSeat(room, 0));
+  const after = await loadRoom(code);
+  assert.equal(after.status, "playing");
+  assert.equal(after.pot, 20000);
+  assert.equal(after.seats[0], null);
+  assert.equal(after.stakes.find((stake) => stake.playerId === players[0]).forfeited, true);
+  assert.equal((await loadWallet(players[0])).chips, 5000);
+}
+
 const opened = await testOpeningATableDoesNotTakeChips();
 await testLeaveBeforeTheHandRefundsAndClearsTheTable(opened);
 await testLegacyBuyInIsRefundedOnLobbyLeave();
 await testStartedHandStillForfeitsOnQuit();
 await testSecondTableDoesNotKeepTheFirstSeat();
 await testBrokePlayerIsNotSeated();
+await testLobbyListLeaveKeepsAnUnchargedWallet();
+await testLobbyListLeaveRefundsARecordedStake();
+await testReenterWaitingViewThenLeaveKeepsTheWallet();
+await testReenterRefundsARecordedStakeFromTheWaitingView();
+await testLobbyLeaveKeepsATableThatStillHasSomeone();
+await testStartedHandStillForfeitsAndLobbyLeaveRefuses();
 console.log("chip lobby ok");
