@@ -785,7 +785,7 @@ function chainRaceRoom() {
   room.G.chainRank = "7";
   room.G.free = true;
   room.G.pile = [{ r: "7", s: "S" }];
-  room.G.players[0].slots[0] = card("7", "H", 4);
+  room.G.players[0].slots[0] = card("7", "H", 4, [true, false, false, false]);
   room.G.pick = ["0:0", "1:0"];
   return room;
 }

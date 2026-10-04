@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { makeDeal, handleAction, publicState, endKeepBothReveal, applyTimers, ACT_MS, WIGGLE_MS, GIVE_MS } from "../src/lib/declare-engine.ts";
+import { playComputerTurns } from "../src/lib/declare-cpu.ts";
 
 function roomWith(G) {
   return {
@@ -163,6 +164,7 @@ function testChainDumpDoesNotTakeCenter() {
   const room = base();
   room.G.pile = [{ r: "A", s: "D" }];
   room.G.players[0].slots[2] = card("Q", "C");
+  room.G.players[0].slots[2].seen = [true, false];
   room.G.players[0].slots[3] = card("Q", "S");
   room.G.players[1].slots[0] = card("K", "H");
   handleAction(room, 0, { action: "drag", gesture: "swap", p: 0, i: 3 });
@@ -181,6 +183,7 @@ function testChainDumpDoesNotTakeCenter() {
   legal.G.players[0].slots[2] = card("Q", "C");
   legal.G.players[0].slots[3] = card("Q", "S");
   legal.G.players[1].slots[0] = card("Q", "H");
+  legal.G.players[1].slots[0].seen = [true, false];
   handleAction(legal, 0, { action: "drag", gesture: "swap", p: 0, i: 3 });
   assert.equal(legal.G.phase, "chain");
   handleAction(legal, 0, { action: "drag", gesture: "dump", p: 1, i: 0 });
@@ -293,16 +296,30 @@ function testChainTargetsAreMatchesOnly() {
   const room = base();
   room.G.pile = [{ r: "A", s: "D" }];
   room.G.players[0].slots[2] = card("Q", "C");
+  room.G.players[0].slots[2].seen = [true, false];
   room.G.players[0].slots[3] = card("Q", "S");
+  room.G.players[0].slots[3].known[0] = true;
   room.G.players[1].slots[0] = card("K", "H");
   room.G.players[1].slots[1] = card("Q", "D");
+  room.G.players[1].slots[1].seen = [true, false];
+  room.G.players[1].slots[2] = card("Q", "C");
   handleAction(room, 0, { action: "drag", gesture: "swap", p: 0, i: 3 });
   assert.equal(room.G.phase, "chain");
   const pick = room.G.pick.slice().sort();
   assert.ok(pick.includes("0:2"), "own remaining queen stays a discard target");
   assert.ok(pick.includes("1:1"), "matching opponent queen is a dump target");
   assert.equal(pick.includes("1:0"), false, "non-matching opponent card is not a drop target");
+  assert.equal(pick.includes("1:2"), false, "an unseen matching queen is not a dump target");
   assert.deepEqual(publicState(room, 0).pick, [], "the client is not told which cards match");
+  const hiddenQueen = JSON.stringify(publicState(room, 0).players[1].slots[2]);
+  const logBefore = room.G.log;
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "dump", p: 1, i: 2 }), false);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 2 }), false);
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.players[1].slots[2].r, "Q");
+  assert.equal(room.G.log, logBefore);
+  assert.equal(JSON.stringify(publicState(room, 0).players[1].slots[2]), hiddenQueen);
+  assert.equal(publicState(room, 0).players[1].slots[2].r, undefined);
   assert.equal(handleAction(room, 0, { action: "drag", gesture: "dump", p: 1, i: 0 }), false);
   assert.equal(room.G.phase, "chain");
   assert.equal(room.G.players[1].slots[0].r, "K");
@@ -623,6 +640,103 @@ function testTwoPlayerOffTurnDragAndPeekedGift() {
   assert.equal(room.G.turn, 1);
 }
 
+function testSwapThenDumpSeenOpponentBeforeComputer() {
+  const room = base();
+  room.seats[1] = { name: "Computer", token: "b", computer: true };
+  room.G.pile = [{ r: "5", s: "H" }];
+  room.G.players[0].slots[0] = card("J", "C");
+  room.G.players[0].slots[0].known = [true, false];
+  room.G.players[0].slots[0].seen = [true, false];
+  room.G.players[0].slots[1] = card("J", "S");
+  room.G.players[1].slots[2] = card("J", "D");
+  room.G.players[1].slots[2].seen = [true, true];
+  room.G.players[1].slots[3] = card("J", "H");
+  handleAction(room, 0, { action: "drag", gesture: "swap", p: 0, i: 0 });
+  assert.equal(room.G.phase, "chain", "a seen opponent jack keeps the turn for the dump");
+  assert.equal(room.G.turn, 0);
+  assert.equal(room.G.chainRank, "J");
+  assert.equal(room.G.pile[room.G.pile.length - 1].r, "J");
+  assert.equal(room.G.players[0].slots[0].r, "5");
+  assert.ok(room.G.players[0].slots[0].known.every((flag) => flag === false), "swapped-in card stays face down");
+  assert.equal(room.G.wiggle.pid, 0);
+  assert.equal(room.G.wiggle.i, 0);
+  playComputerTurns(room, Date.now());
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.players[1].slots[2].r, "J", "the computer does not discard its jack first");
+  assert.equal(room.G.pick.includes("0:1"), false);
+  assert.equal(room.G.pick.includes("1:3"), false);
+  assert.ok(room.G.pick.includes("1:2"));
+  assert.deepEqual(publicState(room, 0).pick, []);
+  const hiddenOwn = JSON.stringify(publicState(room, 0).players[0].slots[1]);
+  const hiddenCpu = JSON.stringify(publicState(room, 0).players[1].slots[3]);
+  const logBefore = room.G.log;
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 1 }), false);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 3 }), false);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "dump", p: 1, i: 3 }), false);
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.log, logBefore);
+  assert.equal(JSON.stringify(publicState(room, 0).players[0].slots[1]), hiddenOwn);
+  assert.equal(JSON.stringify(publicState(room, 0).players[1].slots[3]), hiddenCpu);
+  assert.equal(publicState(room, 0).players[0].slots[1].r, undefined);
+  assert.equal(publicState(room, 0).players[1].slots[3].r, undefined);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 2 }), true);
+  assert.equal(room.G.phase, "dumpGive");
+  assert.equal(room.G.players[1].slots[2], null);
+  assert.equal(room.G.pile[room.G.pile.length - 1].s, "D");
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 2 }), false);
+  assert.notEqual(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 2 }), true);
+  assert.equal(room.G.players[1].slots[2], null);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "give", p: 0, i: 3 }), true);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.players[1].slots[2].r, "K");
+  assert.ok(room.G.players[1].slots[2].known.every((flag) => flag === false));
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 2 }), true);
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.players[0].slots[1].r, "J", "the unseen jack was not discarded along with the dump");
+}
+
+function testUnseenMatchDoesNotKeepPassOrReveal() {
+  const room = base();
+  room.seats[1] = { name: "Computer", token: "b", computer: true };
+  room.G.pile = [{ r: "9", s: "H" }];
+  room.G.players[0].slots[0] = card("4", "D");
+  room.G.players[0].slots[0].known = [true, false];
+  room.G.players[0].slots[0].seen = [true, false];
+  room.G.players[0].slots[1] = card("4", "C");
+  room.G.players[1].slots[0] = card("4", "S");
+  const hiddenOwn = JSON.stringify(publicState(room, 0).players[0].slots[1]);
+  const hiddenOpp = JSON.stringify(publicState(room, 0).players[1].slots[0]);
+  handleAction(room, 0, { action: "drag", gesture: "swap", p: 0, i: 0 });
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.chainRank, null);
+  assert.equal(JSON.stringify(publicState(room, 0).players[0].slots[1]), hiddenOwn);
+  assert.equal(JSON.stringify(publicState(room, 0).players[1].slots[0]), hiddenOpp);
+  assert.equal(publicState(room, 0).players[0].slots[1].r, undefined);
+  assert.equal(publicState(room, 0).players[1].slots[0].r, undefined);
+
+  const drawn = base();
+  drawn.G.phase = "draw";
+  drawn.G.pile = [];
+  drawn.G.deck.push({ r: "4", s: "H" });
+  drawn.G.players[0].slots[1] = card("4", "C");
+  drawn.G.players[0].slots[2] = card("9", "D");
+  handleAction(drawn, 0, { action: "draw" });
+  assert.equal(drawn.G.phase, "act");
+  assert.equal(drawn.G.pile[drawn.G.pile.length - 1].r, "4");
+  const view = publicState(drawn, 0);
+  assert.equal(view.phase, "act");
+  assert.equal(view.players[0].slots[1].known, false);
+  assert.equal(view.players[0].slots[2].known, false);
+  assert.equal(view.players[0].slots[1].r, undefined);
+  assert.equal(view.players[0].slots[2].r, undefined);
+  assert.equal(JSON.stringify(view.players[0].slots[1]), JSON.stringify(view.players[0].slots[2]));
+  assert.equal((view.pick || []).some((key) => String(key).startsWith("0:")), false);
+}
+
+testSwapThenDumpSeenOpponentBeforeComputer();
+testUnseenMatchDoesNotKeepPassOrReveal();
 testQuitDismissesTable();
 testMoveClockKeepsCenterCard();
 testCancelDoesNotStallAndDumpGiveDoesNotGive();
