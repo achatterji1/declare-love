@@ -81,7 +81,7 @@ async function debit(playerId: string, amount: number): Promise<Wallet> {
   throw new Error("conflict");
 }
 
-function tableSummary(room: Room) {
+function tableSummary(room: Room, playerId?: string) {
   const tier = room.tier;
   if (!tier) return null;
   const seats = room.seats.map((seat) => ({
@@ -89,6 +89,7 @@ function tableSummary(room: Room) {
     computer: !!(seat && seat.computer),
     open: !seat,
   }));
+  const yours = !!(playerId && room.seats.some((seat) => seat && seat.playerId === playerId));
   return {
     code: room.code,
     tier,
@@ -96,6 +97,7 @@ function tableSummary(room: Room) {
     buyIn: room.buyIn || TIERS[tier].buyIn,
     pot: room.pot || 0,
     openSeats: seats.filter((seat) => seat.open).length,
+    yours,
     seats,
   };
 }
@@ -104,10 +106,60 @@ export async function listTables(playerId?: string) {
   const rooms = await listChipRooms();
   const tables = rooms
     .filter((room) => room.status === "lobby")
-    .map(tableSummary)
+    .map((room) => tableSummary(room, playerId))
     .filter((row) => row && row.openSeats > 0);
   const wallet = playerId ? await getOrCreateWallet(playerId) : null;
   return { tables, wallet: wallet ? walletView(wallet) : null };
+}
+
+// The waiting view needs the seat token. A refresh drops it, so choosing the
+// table again hands the same lobby seat back without taking chips.
+async function resumeLobbySeat(room: Room, playerId: string) {
+  const seat = room.seats.findIndex((slot) => slot && slot.playerId === playerId);
+  const sitting = seat >= 0 ? room.seats[seat] : null;
+  if (!sitting || room.status !== "lobby") throw new Error("You are not seated at that table.");
+  let current = room;
+  let idx = seat;
+  if (!sitting.token) {
+    const token = crypto.randomUUID();
+    const saved = await mutateRoom(room.code, (found) => {
+      if (found.status !== "lobby") throw new Error("That hand has already started.");
+      const owned = found.seats.findIndex((slot) => slot && slot.playerId === playerId);
+      if (owned < 0) throw new Error("You are not seated at that table.");
+      if (!found.seats[owned]!.token) found.seats[owned]!.token = token;
+      return owned;
+    });
+    current = saved.room;
+    idx = saved.result;
+  }
+  const updated = await loadWallet(playerId);
+  const held = current.seats[idx];
+  if (!held) throw new Error("You are not seated at that table.");
+  return {
+    code: current.code,
+    seat: idx,
+    token: held.token,
+    state: publicState(current, idx),
+    wallet: updated ? walletView(updated) : null,
+  };
+}
+
+// Lobby leave is authorized by the signed-in player, not the seat token a
+// refresh throws away. It only works while the hand is still waiting.
+export async function leaveLobbySeat(input: { playerId: string; code: string }) {
+  const opened = await getOrCreateWallet(input.playerId);
+  const playerId = opened.id;
+  const code = (input.code || "").trim().toUpperCase();
+  if (!code) throw new Error("That table is not open.");
+  await mutateRoom(code, (room) => {
+    if (!room.tier) throw new Error("That table is not open.");
+    if (room.status !== "lobby") throw new Error("That hand has already started.");
+    const idx = room.seats.findIndex((seat) => seat && seat.playerId === playerId);
+    if (idx < 0) throw new Error("You are not seated at that table.");
+    leaveSeat(room, idx);
+  });
+  const wallet = await loadWallet(playerId);
+  return { ok: true, wallet: wallet ? walletView(wallet) : null };
 }
 
 async function freshTable(tier: Tier): Promise<Room> {
@@ -205,10 +257,10 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
     const found = await loadRoom(code);
     if (!found || !found.tier) throw new Error("That table is not open.");
     if (found.status !== "lobby") throw new Error("That hand has already started.");
-    if (!found.seats.some((seat) => !seat)) throw new Error("That table is full.");
     if (found.seats.some((seat) => seat && seat.playerId === playerId)) {
-      throw new Error("You are already seated.");
+      return resumeLobbySeat(found, playerId);
     }
+    if (!found.seats.some((seat) => !seat)) throw new Error("That table is full.");
     tier = found.tier;
   } else {
     if (!input.tier || !isTier(input.tier)) throw new Error("Choose Bronze, Silver, Gold, or VIP.");
@@ -234,6 +286,12 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
   try {
     const seated = await mutateRoom(code, (room) => {
       if (room.tier !== tier) throw new Error("That table is not open.");
+      const owned = room.seats.findIndex((slot) => slot && slot.playerId === playerId);
+      if (owned >= 0) {
+        if (room.status !== "lobby") throw new Error("That hand has already started.");
+        if (!room.seats[owned]!.token) room.seats[owned]!.token = token;
+        return { seat: owned, filled: false };
+      }
       const idx = joinChipSeat(room, { name, token, playerId });
       return { seat: idx, filled: room.status === "lobby" && room.seats.every(Boolean) };
     });
@@ -249,11 +307,11 @@ export async function sitDown(input: { playerId: string; name: string; tier?: st
   }
   const latest = await loadRoom(code);
   const updated = await loadWallet(playerId);
-  if (!latest || seat < 0) throw new Error("Room not found.");
+  if (!latest || seat < 0 || !latest.seats[seat]) throw new Error("Room not found.");
   return {
     code,
     seat,
-    token,
+    token: latest.seats[seat]!.token,
     state: publicState(latest, seat),
     wallet: updated ? walletView(updated) : null,
   };

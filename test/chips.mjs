@@ -863,6 +863,9 @@ function testLobbyCopyStaysQuiet() {
   assert.equal(html.includes('id="leaveWait"'), true);
   assert.equal(html.includes('onclick="doQuit()">Leave</button>'), true);
   assert.equal(html.includes("syncLeaveButton(!!online.tier)") || html.includes("syncLeaveButton(true)"), true);
+  assert.equal(html.includes("if (table.yours)"), true);
+  assert.equal(html.includes("leaveCode(table.code)"), true);
+  assert.equal(html.includes('op: "leave"'), true);
   assert.equal(html.includes('id="quit" class="quit-btn" onclick="doQuit()">Quit</button>'), true);
   assert.equal(html.includes("comes out when the hand starts"), true);
   assert.equal(html.includes("is in the pot"), false);
@@ -883,7 +886,7 @@ function testSignInGatesPlay() {
   assert.equal(/facebook/i.test(html), false);
   assert.equal(html.includes('id="googleBtn" hidden'), true);
   assert.equal(html.includes("Sign in to play."), true);
-  for (const name of ["function deal(n)", "function createInvite()", "function joinInvite()", "function sitTier(tier)", "function sitCode(code)"]) {
+  for (const name of ["function deal(n)", "function createInvite()", "function joinInvite()", "function sitTier(tier)", "function sitCode(code)", "function leaveCode(code)"]) {
     const start = html.indexOf(name);
     assert.ok(start >= 0, name);
     assert.equal(html.slice(start, start + 180).includes("if (!requirePlay()) return;"), true, name + " is gated");
