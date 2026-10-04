@@ -1,0 +1,1 @@
+CREATE POLICY "Wallets are server-only" ON public.declare_wallets FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
