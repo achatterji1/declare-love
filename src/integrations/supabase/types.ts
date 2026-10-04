@@ -86,7 +86,7 @@ export type Database = {
         }
         Insert: {
           applied_keys?: Json
-          chips?: number
+          chips: number
           claim_available_at?: string | null
           created_at?: string
           id: string
