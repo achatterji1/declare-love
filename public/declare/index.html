@@ -223,7 +223,6 @@
     box-shadow: 0 14px 26px rgba(71,52,35,.32);
   }
   .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-  #dragHint { margin: 4px 0 8px; color: var(--muted); font-style: italic; min-height: 1.3em; }
   .table-foot {
     display: flex;
     justify-content: flex-end;
@@ -519,7 +518,6 @@
       <button type="button" id="redeal" onclick="doRedeal()" style="display:none">Play again</button>
       <span id="who"></span>
     </div>
-    <p id="dragHint"></p>
     <p id="turnTimer"></p>
     <p id="actTimer"></p>
     <div id="confirmBar">
@@ -1286,6 +1284,7 @@ function playCtx() {
       turn: online.turn,
       phase: online.phase,
       free: !!online.free,
+      discardOnDraw: !!online.discardOnDraw,
       declarer: online.declarer,
       intent: online.intent,
       pick: online.pick || [],
@@ -1309,6 +1308,7 @@ function playCtx() {
     turn: G.turn,
     phase: G.phase,
     free: !!G.free,
+    discardOnDraw: !!G.discardOnDraw,
     declarer: G.declarer,
     intent: G.intent,
     pick: G.pick || [],
@@ -1354,7 +1354,7 @@ function oppTargets(c) {
   return out;
 }
 function dumpWindow(c) {
-  if (!c || !c.myTurn || !c.pileTop) return false;
+  if (!c || !c.myTurn || !c.pileTop || c.discardOnDraw) return false;
   if (c.phase === "act" || c.phase === "chain") return true;
   if (c.phase === "draw" && c.free) return true;
   if (c.phase === "pick" && c.intent === "discard") return true;
@@ -1373,9 +1373,9 @@ function chainOppTargets(c) {
   return out;
 }
 function offTurnWindow(c) {
-  if (!c || c.myTurn || c.pending || !c.pileTop) return false;
-  if (c.phase === "act" || c.phase === "chain") return true;
-  if (c.phase === "draw" && c.free) return true;
+  if (!c || c.myTurn || c.pending || !c.pileTop || c.discardOnDraw) return false;
+  if (c.phase === "act" || c.phase === "chain" || c.phase === "power") return true;
+  if (c.phase === "draw") return true;
   return false;
 }
 function rememberedFace(slot, owner, you, n) {
@@ -1406,15 +1406,14 @@ function visibleFace(c, p, i) {
   return rememberedFace(slot, p, c.you, c.n);
 }
 function dumpRank(c) {
-  if (!c || c.pending || !c.pileTop) return null;
+  if (!c || c.pending || !c.pileTop || c.discardOnDraw) return null;
   if (!c.myTurn) {
     if (!offTurnWindow(c)) return null;
     if (c.phase === "chain") return c.chainRank || c.pileTop.r;
     return c.pileTop.r;
   }
   if (c.phase === "chain") return c.chainRank || c.pileTop.r;
-  if (c.phase === "act") return c.pileTop.r;
-  if (c.phase === "draw" && c.free) return c.pileTop.r;
+  if (c.phase === "act" || c.phase === "draw") return c.pileTop.r;
   if (c.phase === "pick" && c.intent === "discard") return c.pileTop.r;
   return null;
 }
@@ -1461,6 +1460,9 @@ function legalMovesFrom(source) {
     if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you && source.zone === "hand" && source.p === c.you && giftFaceDown(c, source.p, source.i)) {
       off.push({ gesture: "give", targets: [{ zone: "hand", p: c.dumpGive.oppPid, i: c.dumpGive.emptiedI }] });
     }
+    if (source.zone === "hand" && source.p === c.you && seenMatchingCard(c, source.p, source.i)) {
+      off.push({ gesture: "discard", targets: [{ zone: "center" }] });
+    }
     if (source.zone === "hand" && source.p !== c.you && knownMatchingOpp(c, source.p, source.i)) {
       off.push({ gesture: "offDump", targets: [{ zone: "center" }] });
     }
@@ -1480,10 +1482,13 @@ function legalMovesFrom(source) {
   if (source.zone === "hand" && occupied(c, source.p, source.i)) {
     var key = source.p + ":" + source.i;
     var mine = source.p === c.you;
-    if (mine && (c.phase === "act" || (c.phase === "draw" && c.free && c.pileTop) || (c.phase === "pick" && c.intent === "discard" && c.pick.indexOf(key) >= 0))) {
+    if (mine && !c.discardOnDraw && (c.phase === "act" || (c.phase === "draw" && c.free && c.pileTop) || (c.phase === "pick" && c.intent === "discard" && c.pick.indexOf(key) >= 0))) {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
-    if (mine && c.phase === "chain" && seenMatchingCard(c, source.p, source.i)) {
+    if (mine && c.phase === "draw" && !c.free && !c.discardOnDraw && seenMatchingCard(c, source.p, source.i)) {
+      moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
+    }
+    if (mine && c.phase === "chain" && !c.discardOnDraw && seenMatchingCard(c, source.p, source.i)) {
       moves.push({ gesture: "discard", targets: [{ zone: "center" }] });
     }
     if (mine && c.phase === "dumpGive" && c.dumpGive && c.pick.indexOf(key) >= 0 && giftFaceDown(c, source.p, source.i)) {
@@ -1506,29 +1511,6 @@ function legalMovesFrom(source) {
   }
   return moves;
 }
-function dragHintFor(c) {
-  if (!c || c.phase === "memorize") return "";
-  if (c.phase === "reveal") return "Round over.";
-  if (c.phase === "keepBoth" || c.phase === "peekReveal") return "";
-  if (!c.myTurn) {
-    if (c.phase === "dumpGive" && c.dumpGive && c.dumpGive.offTurn && c.dumpGive.actor === c.you) {
-      return "Drag one of your face-down cards onto their empty slot. You have 5 seconds.";
-    }
-    if (offTurnWindow(c)) return "If you have seen a matching card in another hand, drag it onto the center. Then give them one of your face-down cards.";
-    return "Waiting for the other player.";
-  }
-  if (c.phase === "dumpGive") return "Drag one of your face-down cards onto the empty slot.";
-  if (c.phase === "chain") return "Drag a matching card from your hand onto the center, or a known matching opponent card onto the center. Or Pass.";
-  if (c.phase === "power") {
-    if (c.powerStep === "q-mine" || c.powerStep === "q-theirs") return "Drag one of your cards onto an opponent card to trade.";
-    if (c.powerStep === "k-trade") return "Drag your peeked card onto theirs to trade, or Pass.";
-    return "Tap a highlighted card.";
-  }
-  if (c.phase === "act") return "Drag the center card onto one of yours to swap, or onto an opponent card to dump. Drag a known matching opponent card onto the center, then give them a face-down card. Drag one of your cards onto the center to discard.";
-  if (c.phase === "draw" && c.free && c.pileTop) return "Drag the center card onto one of yours to pick it, or onto an opponent card to dump. Drag a known matching opponent card onto the center, then give them a face-down card. Drag one of your cards onto the center to discard.";
-  if (c.phase === "draw") return "Draw, or Declare when you are ready.";
-  return "";
-}
 function canPassNow(c) {
   if (!c || !c.myTurn || c.pending) return false;
   if (c.phase === "act" || c.phase === "chain") return true;
@@ -1542,11 +1524,9 @@ function canUsePower(c) {
 }
 function syncChrome(c, memorizing) {
   var redeal = document.getElementById("redeal");
-  var hintEl = document.getElementById("dragHint");
   if (memorizing || !c) {
     disablePlayButtons(true);
     if (redeal) redeal.style.display = "none";
-    if (hintEl) hintEl.textContent = "";
     return;
   }
   var pending = !!c.pending;
@@ -1556,7 +1536,6 @@ function syncChrome(c, memorizing) {
   document.getElementById("power").disabled = pending || !canUsePower(c);
   document.getElementById("power").style.display = "";
   if (redeal) redeal.style.display = c.phase === "reveal" ? "" : "none";
-  if (hintEl) hintEl.textContent = dragHintFor(c);
 }
 function slotWantsPick(c, pid, i) {
   if (!c || !c.pick || c.pick.indexOf(pid + ":" + i) < 0) return false;
@@ -1854,18 +1833,45 @@ function localSwapOrClaim(gesture, i) {
   beginChain(pid, dumped.r, true);
   return true;
 }
+function localOffTurnDiscard(i) {
+  if (!G || G.turn === 0 || G.discardOnDraw || G.pending) return false;
+  var allowed = G.phase === "act" || G.phase === "chain" || G.phase === "power" || G.phase === "draw";
+  if (!allowed || !pileTop()) return false;
+  var card = G.players[0].slots[i];
+  var top = pileTop();
+  if (!card || !playerSaw(0, card, 0, i) || card.r !== top.r) return false;
+  G.players[0].slots[i] = null;
+  G.pile.push(card);
+  G.discardOnDraw = true;
+  say("Discarded " + label(card) + " on top of " + label(top) + ". One match action — turn ends; next can Pick it.");
+  render();
+  return true;
+}
 function localDiscard(i) {
-  if (!G || G.turn !== 0) return false;
+  if (!G) return false;
+  if (G.turn !== 0) return localOffTurnDiscard(i);
   var pid = G.turn;
   var card = G.players[pid].slots[i];
   var drawn = pileTop();
-  if (!card || !drawn) return false;
+  if (!card || !drawn || G.discardOnDraw) return false;
+  if (G.phase === "draw" && !G.free) {
+    if (!playerSaw(pid, card, pid, i)) return false;
+    if (card.r !== drawn.r) return wrongDiscardKeepBoth(pid, i) || true;
+    G.players[pid].slots[i] = null;
+    G.pile.push(card);
+    G.discardOnDraw = true;
+    G.free = true;
+    say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
+    beginChain(pid, card.r);
+    return true;
+  }
   if (G.phase === "chain") {
     if (G.pick.indexOf(pid + ":" + i) < 0) return false;
     if (!playerSaw(pid, card, pid, i) || card.r !== G.chainRank) return false;
     var afterPeek = G.chainSkipFree === false;
     G.players[pid].slots[i] = null;
     G.pile.push(card);
+    G.discardOnDraw = true;
     G.free = true;
     G.chainSkipFree = null;
     say("Discarded matching " + label(card) + (afterPeek ? " after the peek." : " after swap.") + " Turn ends; next can Pick it.");
@@ -1878,6 +1884,7 @@ function localDiscard(i) {
   if (card.r === drawn.r) {
     G.players[pid].slots[i] = null;
     G.pile.push(card);
+    G.discardOnDraw = true;
     G.free = true;
     say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
     beginChain(pid, card.r);
@@ -1900,11 +1907,11 @@ function localFaceDown(card, pid) {
   return !!(card && Array.isArray(card.known) && !card.known[0]);
 }
 function localKnownDump(oppPid, i) {
-  if (!G || oppPid === 0 || handLocked(oppPid) || G.pending) return false;
+  if (!G || oppPid === 0 || handLocked(oppPid) || G.pending || G.discardOnDraw) return false;
   var onTurn = G.turn === 0;
   var allowed = onTurn
-    ? (G.phase === "act" || (G.phase === "draw" && G.free) || G.phase === "chain" || (G.phase === "pick" && G.intent === "discard"))
-    : (G.phase === "act" || G.phase === "chain" || (G.phase === "draw" && G.free));
+    ? (G.phase === "act" || G.phase === "draw" || G.phase === "chain" || (G.phase === "pick" && G.intent === "discard"))
+    : (G.phase === "act" || G.phase === "chain" || G.phase === "power" || G.phase === "draw");
   if (!allowed || !pileTop()) return false;
   var card = G.players[oppPid] && G.players[oppPid].slots[i];
   if (!card || !(card.known[0] || card.noted)) return false;
@@ -1917,6 +1924,7 @@ function localKnownDump(oppPid, i) {
   var resumeTurnWaitKey = G.turnWaitKey || null;
   G.players[oppPid].slots[i] = null;
   G.pile.push(card);
+  G.discardOnDraw = true;
   if (onTurn) {
     G.free = true;
     say("Dumped " + label(card) + " from " + G.players[oppPid].name + " onto the center.");
@@ -2239,7 +2247,7 @@ function deal(n) {
     var ends = Date.now() + 30000;
     clearKeepBothTimer();
     wiggleSeen = {};
-    G = {n:n, cols:cols, deck:deck, pile:[], players:players, turn:0, phase:"memorize", declarer:null, queue:[], intent:null, pick:[], free:false, dumpGive:null, power:null, powerStep:null, powerTarget:null, powerMine:null, chainPid:null, chainRank:null, chainSkipFree:null, pending:null, actEndsAt:null, memorizeReady: Array(n).fill(false), memorizeEndsAt: ends};
+    G = {n:n, cols:cols, deck:deck, pile:[], players:players, turn:0, phase:"memorize", declarer:null, queue:[], intent:null, pick:[], free:false, discardOnDraw:false, dumpGive:null, power:null, powerStep:null, powerTarget:null, powerMine:null, chainPid:null, chainRank:null, chainSkipFree:null, pending:null, actEndsAt:null, memorizeReady: Array(n).fill(false), memorizeEndsAt: ends};
     document.getElementById("setup").style.display = "none";
     document.getElementById("table").style.display = "block";
     say("Memorize your bottom two cards. Click Ready when done (or wait for the timer).");
@@ -2271,12 +2279,13 @@ function hasUnlockedOppCards(me) {
   return false;
 }
 function matchRankForDump() {
-  if (!G) return null;
+  if (!G || G.discardOnDraw) return null;
   var top = pileTop();
   if (G.phase === "chain" && G.chainRank) return G.chainRank;
   if (G.phase === "dumpGive" && G.dumpGive) return G.dumpGive.rank;
   if (G.phase === "act" && top) return top.r;
-  if (G.phase === "draw" && G.free && top) return top.r;
+  if (G.phase === "draw" && top) return top.r;
+  if (G.phase === "power" && top) return top.r;
   if (G.phase === "pick" && G.intent === "discard" && top) return top.r;
   return null;
 }
@@ -2417,6 +2426,7 @@ function completeDumpGive(giveI) {
 }
 function tryDumpOpponent(pid, i) {
   var actor = G.turn;
+  if (G.discardOnDraw) return false;
   if (pid === actor || handLocked(pid)) return false;
   var rank = matchRankForDump();
   if (!rank) return false;
@@ -2434,6 +2444,7 @@ function tryDumpOpponent(pid, i) {
   if (!hasGive) { say("Need a face-down card to give them after dumping."); return false; }
   G.players[pid].slots[i] = null;
   G.pile.push(card);
+  G.discardOnDraw = true;
   G.free = true; // dumped center Pickable by next after turn
   say("Dumped " + label(card) + " from " + G.players[pid].name + " onto the center.");
   startDumpGive(actor, pid, i, rank);
@@ -2564,6 +2575,7 @@ function drawCard() {
     if (!G || G.phase !== "draw" || cpu()) return;
     if (!G.deck.length) return reveal();
     G.free = false;
+    G.discardOnDraw = false;
     var card = G.deck.pop();
     G.pile.push(card);
     G.phase = "act";
@@ -2758,6 +2770,7 @@ function keepCenterCard() {
   if (G.n > 1) extra.known[1] = true;
   var placedI = placeDrawnInHand(pid, extra);
   G.pile.pop();
+  G.discardOnDraw = false;
   G.phase = "keepBoth";
   G.keepBoth = { pid: pid, handI: placedI, placedI: placedI, priorHandKnown: false };
   say("Time's up. You keep " + label(drawn) + " — remember where it is.");
@@ -2866,7 +2879,7 @@ function endPeekReveal() {
     G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
     var topTen = pileTop();
     // Drawn 10 stays on center. A peeked card of the same rank can be discarded once.
-    if (card && topTen && card.r === topTen.r) {
+    if (card && topTen && card.r === topTen.r && !G.discardOnDraw) {
       beginChain(pr.peeker, card.r, true, {
         keepCenter: true,
         log: "Peeked a matching " + card.r + " — discard that " + card.r + " from your hand (or dump an opponent " + card.r + "), or Done. One only."
@@ -2876,8 +2889,28 @@ function endPeekReveal() {
     finish();
     return;
   }
+  if (pr.next === "finish" && card && !G.discardOnDraw) {
+    var jackTop = pileTop();
+    if (jackTop && card.r === jackTop.r) {
+      G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
+      beginChain(pr.peeker, card.r, true, {
+        keepCenter: true,
+        log: "Peeked a matching " + card.r + " — discard that " + card.r + " from your hand (or dump an opponent " + card.r + "), or Done. One only."
+      });
+      return;
+    }
+  }
   G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
   finish();
+}
+function offerLocalFollowUp(pid, keepCenter) {
+  if (!pileTop() || G.discardOnDraw) {
+    if (keepCenter) G.free = false;
+    else if (pileTop()) G.free = true;
+    finish();
+    return;
+  }
+  beginChain(pid, pileTop().r, true, keepCenter ? { keepCenter: true } : null);
 }
 function endKeepBothReveal() {
   if (!G || G.phase !== "keepBoth" || !G.keepBoth) return;
@@ -2931,6 +2964,7 @@ function swapIntoHand(pid, i) {
   G.players[pid].slots[i] = taken;
   G.pile[G.pile.length - 1] = card;
   G.free = false;
+  G.discardOnDraw = false;
   G.wiggle = { pid: pid, i: i, until: Date.now() + 2000 };
   return taken;
 }
@@ -2961,8 +2995,10 @@ function onCard(ev) {
       var ch = G.players[pid].slots[i];
       if (!ch || !playerSaw(G.turn, ch, pid, i) || ch.r !== G.chainRank) return;
       var afterPeek = G.chainSkipFree === false;
+      if (G.discardOnDraw) return;
       G.players[pid].slots[i] = null;
       G.pile.push(ch);
+      G.discardOnDraw = true;
       G.free = true;
       G.chainSkipFree = null;
       say("Discarded matching " + label(ch) + (afterPeek ? " after the peek." : " after swap.") + " Turn ends; next can Pick it.");
@@ -2978,8 +3014,10 @@ function onCard(ev) {
     var drawn = pileTop();
     if (G.intent === "discard") {
       if (card.r === drawn.r) {
+        if (G.discardOnDraw) return;
         G.players[pid].slots[i] = null;
         G.pile.push(card);
+        G.discardOnDraw = true;
         G.free = true; // discarded top Pickable by next
         say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
         return beginChain(pid, card.r);
@@ -3011,6 +3049,10 @@ function beginChain(pid, rank, allowOne, opts) {
   G.chainSkipFree = null;
   if (pileTop()) G.free = true; // discarded/dumped/swapped top Pickable for next
   if (!allowOne) return finish();
+  if (G.discardOnDraw) {
+    if (keepCenter) G.free = false;
+    return finish();
+  }
 
   // One follow-up, only for a card this player has seen. An unseen match must
   // not keep Pass available or let the computer play the card first.
@@ -3088,7 +3130,7 @@ function skipKingTrade() {
   // Peeks were temporary UI; AI memory already kept in endPeekReveal for peeker seat only
   say("Skipped trade. K stays pickable for next.");
   G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
-  finish();
+  offerLocalFollowUp(G.turn, false);
 }
 function confirmKingTrade() {
   if (!G || G.phase !== "power" || G.powerStep !== "k-trade") return;
@@ -3115,7 +3157,7 @@ function confirmKingTrade() {
   // Vague log — do not reveal which cards moved; K remains pickable for next
   say(G.players[me].name + " traded after King peeks. K stays pickable for next.");
   G.free = true; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
-  finish();
+  offerLocalFollowUp(me, false);
 }
 function onPowerCard(pid, i) {
   var key = pid + ":" + i;
@@ -3129,7 +3171,7 @@ function onPowerCard(pid, i) {
       say("Computer peeked own card.");
       G.power = null; G.powerStep = null; G.pick = [];
       var topCpu = pileTop();
-      if (peekedCpu && topCpu && peekedCpu.r === topCpu.r) {
+      if (peekedCpu && topCpu && peekedCpu.r === topCpu.r && !G.discardOnDraw) {
         beginChain(me, peekedCpu.r, true, {
           keepCenter: true,
           log: "Computer peeked a matching " + peekedCpu.r + ". One matching discard or dump, or the turn ends."
@@ -3147,9 +3189,19 @@ function onPowerCard(pid, i) {
   if (G.powerStep === "peek-opp") {
     if (handLocked(pid)) return false;
     if (me === cpuId()) {
-      G.players[pid].slots[i].known[me] = true;
+      var jackCard = G.players[pid].slots[i];
+      jackCard.known[me] = true;
       say("Computer peeked an opponent card.");
-      G.free = false; G.power = null; G.powerStep = null; G.pick = [];
+      G.power = null; G.powerStep = null; G.pick = [];
+      var jackTop = pileTop();
+      if (jackCard && jackTop && jackCard.r === jackTop.r && !G.discardOnDraw) {
+        beginChain(me, jackCard.r, true, {
+          keepCenter: true,
+          log: "Computer peeked a matching " + jackCard.r + ". One matching discard or dump, or the turn ends."
+        });
+        return true;
+      }
+      G.free = false;
       finish();
       return true;
     }
@@ -3403,20 +3455,35 @@ function cpuTryDeclareAfterEmptyHand() {
   G.dumpGive = null;
   return cpuMaybeDeclare();
 }
+function cpuMatchOpenCenter() {
+  if (!G || G.phase !== "draw" || G.discardOnDraw || !pileTop()) return false;
+  var rank = pileTop().r;
+  var me = cpuId();
+  var own = cpuMatchIndex(me, rank);
+  if (own >= 0) {
+    var drawn = pileTop();
+    var dumped = G.players[me].slots[own];
+    G.players[me].slots[own] = null;
+    G.pile.push(dumped);
+    G.discardOnDraw = true;
+    G.free = true;
+    say("Computer discarded a match (" + label(dumped) + ") onto " + label(drawn) + ". One match action — your turn can Pick it.");
+    beginChain(me, dumped.r);
+    return true;
+  }
+  var opp = cpuTargetableOpp();
+  var dump = opp >= 0 ? cpuMatchIndex(opp, rank) : -1;
+  if (dump >= 0 && cpuLiveIndices(me).length > 0) return cpuDoDump(opp, dump, rank);
+  return false;
+}
 function cpuTurn() {
   if (!cpu() || G.phase !== "draw") return;
   if (cpuMaybeDeclare()) return;
-  if (G.free && pileTop()) {
-    var freeRank = pileTop().r;
-    var freeOpp = cpuTargetableOpp();
-    var freeDump = freeOpp >= 0 ? cpuMatchIndex(freeOpp, freeRank) : -1;
-    if (freeDump >= 0 && cpuLiveIndices(cpuId()).length > 0) {
-      if (cpuDoDump(freeOpp, freeDump, freeRank)) return;
-    }
-  }
+  if (cpuMatchOpenCenter()) return;
   if (cpuClaimIfUseful()) return;
   if (!G.deck.length) return reveal();
   G.free = false;
+  G.discardOnDraw = false;
   var drawn = G.deck.pop();
   G.pile.push(drawn);
   G.phase = "act";
@@ -3443,13 +3510,14 @@ function cpuTargetableOpp() {
 }
 function cpuDoDump(oppPid, slotI, rank) {
   var me = cpuId();
-  if (handLocked(oppPid)) return false;
+  if (G.discardOnDraw || handLocked(oppPid)) return false;
   // Never read opponent rank unless AI already knows that slot
   if (!cpuKnows(oppPid, slotI)) return false;
   var card = G.players[oppPid].slots[slotI];
   if (!card || card.r !== rank) return false;
   G.players[oppPid].slots[slotI] = null;
   G.pile.push(card);
+  G.discardOnDraw = true;
   G.free = true; // dumped center Pickable after computer turn
   say("Computer dumped your " + label(card) + " onto the center.");
   G.dumpGive = { actor: me, oppPid: oppPid, emptiedI: slotI, rank: rank };
@@ -3495,6 +3563,7 @@ function cpuAct() {
     var dumpedMatch = G.players[me].slots[match];
     G.players[me].slots[match] = null;
     G.pile.push(dumpedMatch);
+    G.discardOnDraw = true;
     G.free = true; // discarded top Pickable by you next
     say("Computer discarded a match (" + label(dumpedMatch) + ") onto " + label(drawn) + ". One match action — your turn can Pick it.");
     return beginChain(me, dumpedMatch.r);
@@ -3685,6 +3754,7 @@ function cpuChainPlay() {
   var afterPeekCpu = G.chainSkipFree === false;
   G.players[pid].slots[i] = null;
   G.pile.push(ch);
+  G.discardOnDraw = true;
   G.free = true;
   G.chainSkipFree = null;
   say("Computer discarded matching " + label(ch) + (afterPeekCpu ? " after the peek." : " after swap.") + " Turn ends.");

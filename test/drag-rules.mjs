@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { makeDeal, handleAction, publicState, endKeepBothReveal, applyTimers, ACT_MS, WIGGLE_MS, GIVE_MS } from "../src/lib/declare-engine.ts";
+import { makeDeal, handleAction, publicState, endKeepBothReveal, endPeekReveal, applyTimers, ACT_MS, WIGGLE_MS, GIVE_MS } from "../src/lib/declare-engine.ts";
 import { playComputerTurns } from "../src/lib/declare-cpu.ts";
 
 function roomWith(G) {
@@ -70,8 +70,12 @@ function testWrongDiscardPublic() {
     assert.equal(state.keepBoth, null);
     const fives = state.players[0].slots.filter((c) => c && c.r === "5");
     const sevens = state.players[0].slots.filter((c) => c && c.r === "7");
-    assert.equal(fives.length, 0, "5 is face down for viewer " + viewer);
-    assert.equal(sevens.length, 0, "7 is face down for viewer " + viewer);
+    assert.equal(fives.length, 1, "viewer " + viewer + " still remembers the 5");
+    assert.equal(sevens.length, 1, "viewer " + viewer + " still remembers the 7");
+    assert.equal(fives[0].known, false, "5 stays face down for viewer " + viewer);
+    assert.equal(sevens[0].known, false, "7 stays face down for viewer " + viewer);
+    assert.equal(fives[0].remembered, true);
+    assert.equal(sevens[0].remembered, true);
   }
 }
 
@@ -735,6 +739,270 @@ function testUnseenMatchDoesNotKeepPassOrReveal() {
   assert.equal((view.pick || []).some((key) => String(key).startsWith("0:")), false);
 }
 
+function testKingPeekThenDumpSeenKing() {
+  const room = base();
+  room.seats[1] = { name: "Computer", token: "b", computer: true };
+  room.G.pile = [{ r: "K", s: "H" }];
+  room.G.players[0].slots[0] = card("A", "D");
+  room.G.players[0].slots[1] = card("K", "S");
+  room.G.players[0].slots[3] = card("9", "D");
+  room.G.players[1].slots[0] = card("K", "D");
+  room.G.players[1].slots[1] = card("K", "C");
+  handleAction(room, 0, { action: "power" });
+  handleAction(room, 0, { action: "card", p: 0, i: 0 });
+  endPeekReveal(room);
+  handleAction(room, 0, { action: "card", p: 1, i: 0 });
+  endPeekReveal(room);
+  assert.equal(room.G.powerStep, "k-trade");
+  handleAction(room, 0, { action: "skipTrade" });
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.turn, 0);
+  assert.equal(room.G.chainRank, "K");
+  assert.ok(room.G.pick.includes("1:0"));
+  assert.equal(room.G.pick.includes("1:1"), false);
+  assert.equal(room.G.pick.includes("0:1"), false);
+  assert.deepEqual(publicState(room, 0).pick, []);
+  assert.equal(publicState(room, 0).players[1].slots[0].r, "K");
+  assert.equal(publicState(room, 0).players[1].slots[0].remembered, true);
+  assert.equal(publicState(room, 0).players[1].slots[1].r, undefined);
+  assert.equal(publicState(room, 1).players[1].slots[0].r, undefined);
+  playComputerTurns(room, Date.now());
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.players[1].slots[0].r, "K");
+  assert.equal(room.G.players[1].slots[1].r, "K");
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 0 }), true);
+  assert.equal(room.G.phase, "dumpGive");
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "give", p: 0, i: 3 }), true);
+  const received = room.G.players[1].slots[0];
+  assert.equal(received.r, "9");
+  assert.ok(received.known.every((flag) => flag === false));
+  assert.ok(received.seen.every((flag) => flag === false));
+  assert.equal(room.G.discardOnDraw, true);
+  assert.notEqual(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 1 }), true);
+  assert.equal(room.G.players[1].slots[1].r, "K");
+}
+
+function testKingPeekNothingSeenEndsWithoutChain() {
+  const room = base();
+  room.seats[1] = { name: "Computer", token: "b", computer: true };
+  room.G.pile = [{ r: "K", s: "H" }];
+  room.G.players[0].slots[0] = card("A", "D");
+  room.G.players[1].slots[0] = card("4", "D");
+  room.G.players[1].slots[1] = card("K", "C");
+  const hidden = JSON.stringify(publicState(room, 0).players[1].slots[1]);
+  handleAction(room, 0, { action: "power" });
+  handleAction(room, 0, { action: "card", p: 0, i: 0 });
+  endPeekReveal(room);
+  handleAction(room, 0, { action: "card", p: 1, i: 0 });
+  endPeekReveal(room);
+  handleAction(room, 0, { action: "skipTrade" });
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.chainRank, null);
+  assert.equal(JSON.stringify(publicState(room, 0).players[1].slots[1]), hidden);
+  assert.equal(publicState(room, 0).players[1].slots[1].r, undefined);
+  const logAfter = room.G.log;
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "offDump", p: 1, i: 1 }), false);
+  assert.equal(room.G.players[1].slots[1].r, "K");
+  assert.equal(room.G.log, logAfter);
+  playComputerTurns(room, Date.now());
+  assert.equal(room.G.players[1].slots[1].r, "K");
+}
+
+function testKingTradeFollowsTheSeenKing() {
+  const room = base();
+  room.G.pile = [{ r: "K", s: "H" }];
+  room.G.players[0].slots[0] = card("A", "D");
+  room.G.players[1].slots[0] = card("K", "D");
+  handleAction(room, 0, { action: "power" });
+  handleAction(room, 0, { action: "card", p: 0, i: 0 });
+  endPeekReveal(room);
+  handleAction(room, 0, { action: "card", p: 1, i: 0 });
+  endPeekReveal(room);
+  handleAction(room, 0, { action: "confirmTrade" });
+  assert.equal(room.G.phase, "chain");
+  assert.equal(room.G.players[0].slots[0].r, "K");
+  assert.equal(room.G.players[0].slots[0].seen[0], true);
+  assert.ok(room.G.pick.includes("0:0"));
+  assert.equal(publicState(room, 0).players[0].slots[0].r, "K");
+  assert.equal(publicState(room, 1).players[0].slots[0].r, undefined);
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 0 }), true);
+  assert.equal(room.G.pile[room.G.pile.length - 1].s, "D");
+  assert.equal(room.G.discardOnDraw, true);
+}
+
+function testOneDiscardOnADrawnThree() {
+  const room = base();
+  room.G.turn = 1;
+  room.G.phase = "act";
+  room.G.pile = [{ r: "3", s: "H" }];
+  room.G.players[0].slots[0] = card("3", "D");
+  room.G.players[0].slots[0].seen = [true, true];
+  room.G.players[0].slots[1] = card("3", "C");
+  room.G.players[0].slots[1].seen = [true, false];
+  room.G.players[1].slots[0] = card("8", "S");
+  room.G.players[1].slots[1] = card("3", "S");
+  room.G.players[1].slots[1].seen = [false, true];
+  assert.equal(handleAction(room, 1, { action: "drag", gesture: "offDump", p: 0, i: 0 }), true);
+  assert.equal(room.G.phase, "dumpGive");
+  assert.equal(handleAction(room, 1, { action: "drag", gesture: "give", p: 1, i: 0 }), true);
+  assert.equal(room.G.discardOnDraw, true);
+  assert.equal(room.G.players[0].slots[0].r, "8");
+  assert.ok(room.G.players[0].slots[0].known.every((flag) => flag === false));
+  assert.ok(room.G.players[0].slots[0].seen.every((flag) => flag === false));
+  const hidden = JSON.stringify(publicState(room, 1).players[0].slots[1]);
+  const logAfter = room.G.log;
+  assert.notEqual(handleAction(room, 0, { action: "drag", gesture: "discard", p: 0, i: 1 }), true);
+  assert.equal(room.G.players[0].slots[1].r, "3");
+  assert.notEqual(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 1 }), true);
+  assert.equal(room.G.players[1].slots[1].r, "3");
+  assert.equal(room.G.log, logAfter);
+  assert.equal(JSON.stringify(publicState(room, 1).players[0].slots[1]), hidden);
+  assert.equal(publicState(room, 1).players[0].slots[1].r, undefined);
+}
+
+function testUsedQueenStaysMatchable() {
+  const room = base();
+  room.G.pile = [{ r: "Q", s: "H" }];
+  room.G.players[0].slots[0] = card("5", "C");
+  room.G.players[1].slots[0] = card("9", "D");
+  room.G.players[1].slots[1] = card("Q", "D");
+  room.G.players[1].slots[1].seen = [false, true];
+  room.G.players[1].slots[2] = card("Q", "S");
+  room.G.players[1].slots[2].seen = [false, true];
+  room.G.players[1].slots[3] = card("Q", "C");
+  handleAction(room, 0, { action: "power" });
+  assert.equal(handleAction(room, 0, { action: "drag", gesture: "qtrade", p: 0, i: 0, tp: 1, ti: 0 }), true);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.free, false);
+  assert.equal(room.G.pile[room.G.pile.length - 1].r, "Q");
+  const hidden = JSON.stringify(publicState(room, 1).players[1].slots[3]);
+  const logBefore = room.G.log;
+  assert.equal(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 3 }), false);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.players[1].slots[3].r, "Q");
+  assert.equal(room.G.log, logBefore);
+  assert.equal(JSON.stringify(publicState(room, 1).players[1].slots[3]), hidden);
+  assert.equal(publicState(room, 1).players[1].slots[3].r, undefined);
+  assert.equal(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 1 }), true);
+  assert.equal(room.G.pile[room.G.pile.length - 1].s, "D");
+  assert.equal(room.G.discardOnDraw, true);
+  assert.equal(room.G.players[1].slots[1], null);
+  assert.notEqual(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 2 }), true);
+  assert.equal(room.G.players[1].slots[2].r, "Q");
+
+  const during = base();
+  during.G.pile = [{ r: "Q", s: "H" }];
+  during.G.players[0].slots[0] = card("5", "C");
+  during.G.players[1].slots[0] = card("9", "D");
+  during.G.players[1].slots[1] = card("Q", "D");
+  during.G.players[1].slots[1].seen = [false, true];
+  during.G.players[1].slots[2] = card("Q", "S");
+  during.G.players[1].slots[2].seen = [false, true];
+  handleAction(during, 0, { action: "power" });
+  assert.equal(during.G.phase, "power");
+  assert.equal(handleAction(during, 1, { action: "drag", gesture: "discard", p: 1, i: 1 }), true);
+  assert.equal(during.G.phase, "power");
+  assert.equal(during.G.turn, 0);
+  assert.equal(during.G.discardOnDraw, true);
+  assert.equal(handleAction(during, 0, { action: "drag", gesture: "qtrade", p: 0, i: 0, tp: 1, ti: 0 }), true);
+  assert.notEqual(handleAction(during, 1, { action: "drag", gesture: "discard", p: 1, i: 2 }), true);
+  assert.equal(during.G.players[1].slots[2].r, "Q");
+
+  const wrong = base();
+  wrong.G.phase = "draw";
+  wrong.G.turn = 1;
+  wrong.G.free = false;
+  wrong.G.pile = [{ r: "Q", s: "H" }];
+  wrong.G.players[1].slots[2] = card("7", "C");
+  wrong.G.players[1].slots[2].seen = [false, true];
+  assert.equal(handleAction(wrong, 1, { action: "drag", gesture: "discard", p: 1, i: 2 }), true);
+  assert.equal(wrong.G.phase, "keepBoth");
+  assert.ok(wrong.G.players[1].slots.some((c) => c && c.r === "Q"));
+  assert.ok(wrong.G.players[1].slots.some((c) => c && c.r === "7"));
+
+  const cpu = base();
+  cpu.seats[1] = { name: "Computer", token: "b", computer: true };
+  cpu.G.pile = [{ r: "Q", s: "H" }];
+  cpu.G.players[0].slots[0] = card("5", "C");
+  cpu.G.players[1].slots[0] = card("9", "D");
+  cpu.G.players[1].slots[1] = card("Q", "D");
+  cpu.G.players[1].slots[1].seen = [false, true];
+  cpu.G.deck.push({ r: "4", s: "S" });
+  handleAction(cpu, 0, { action: "power" });
+  handleAction(cpu, 0, { action: "drag", gesture: "qtrade", p: 0, i: 0, tp: 1, ti: 0 });
+  playComputerTurns(cpu, Date.now());
+  assert.equal(cpu.G.pile[cpu.G.pile.length - 1].s, "D");
+  assert.equal(cpu.G.players[1].slots[1], null);
+  assert.equal(cpu.G.discardOnDraw, true);
+
+  const blind = base();
+  blind.seats[1] = { name: "Computer", token: "b", computer: true };
+  blind.G.pile = [{ r: "Q", s: "H" }];
+  blind.G.players[0].slots[0] = card("5", "C");
+  blind.G.players[1].slots[0] = card("9", "D");
+  blind.G.players[1].slots[1] = card("Q", "D");
+  blind.G.deck.push({ r: "4", s: "S" });
+  handleAction(blind, 0, { action: "power" });
+  handleAction(blind, 0, { action: "drag", gesture: "qtrade", p: 0, i: 0, tp: 1, ti: 0 });
+  playComputerTurns(blind, Date.now());
+  assert.equal(blind.G.players[1].slots[1].r, "Q");
+  assert.equal(blind.G.pile[blind.G.pile.length - 1].r, "4");
+}
+
+function testUsedTenStaysMatchable() {
+  const room = base();
+  room.G.pile = [{ r: "10", s: "C" }];
+  room.G.players[0].slots[0] = card("4", "D");
+  room.G.players[0].slots[1] = card("10", "S");
+  room.G.players[1].slots[0] = card("10", "H");
+  room.G.players[1].slots[0].seen = [false, true];
+  room.G.players[1].slots[1] = card("10", "D");
+  room.G.players[1].slots[1].seen = [false, true];
+  handleAction(room, 0, { action: "power" });
+  handleAction(room, 0, { action: "card", p: 0, i: 0 });
+  endPeekReveal(room);
+  assert.equal(room.G.phase, "draw");
+  assert.equal(room.G.turn, 1);
+  assert.equal(room.G.free, false);
+  assert.equal(room.G.pile[room.G.pile.length - 1].r, "10");
+  const hidden = JSON.stringify(publicState(room, 1).players[0].slots[1]);
+  const logBefore = room.G.log;
+  assert.equal(handleAction(room, 1, { action: "drag", gesture: "offDump", p: 0, i: 1 }), false);
+  assert.equal(room.G.log, logBefore);
+  assert.equal(JSON.stringify(publicState(room, 1).players[0].slots[1]), hidden);
+  assert.equal(publicState(room, 1).players[0].slots[1].r, undefined);
+  assert.equal(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 0 }), true);
+  assert.equal(room.G.pile[room.G.pile.length - 1].s, "H");
+  assert.equal(room.G.discardOnDraw, true);
+  assert.notEqual(handleAction(room, 1, { action: "drag", gesture: "discard", p: 1, i: 1 }), true);
+  assert.equal(room.G.players[1].slots[1].r, "10");
+
+  const drawn = base();
+  drawn.G.phase = "draw";
+  drawn.G.turn = 1;
+  drawn.G.free = false;
+  drawn.G.pile = [{ r: "10", s: "C" }];
+  drawn.G.players[1].slots[0] = card("10", "H");
+  drawn.G.players[1].slots[0].seen = [false, true];
+  drawn.G.deck.push({ r: "4", s: "S" });
+  handleAction(drawn, 1, { action: "draw" });
+  assert.equal(drawn.G.pile[drawn.G.pile.length - 1].r, "4");
+  assert.equal(drawn.G.discardOnDraw, false);
+  assert.equal(handleAction(drawn, 1, { action: "drag", gesture: "discard", p: 1, i: 0 }), true);
+  assert.equal(drawn.G.phase, "keepBoth");
+  assert.ok(drawn.G.players[1].slots.some((c) => c && c.r === "10"));
+  assert.ok(drawn.G.players[1].slots.some((c) => c && c.r === "4"));
+  assert.equal(drawn.G.pile.some((c) => c.r === "4"), false);
+}
+
+testKingPeekThenDumpSeenKing();
+testKingPeekNothingSeenEndsWithoutChain();
+testKingTradeFollowsTheSeenKing();
+testOneDiscardOnADrawnThree();
+testUsedQueenStaysMatchable();
+testUsedTenStaysMatchable();
 testSwapThenDumpSeenOpponentBeforeComputer();
 testUnseenMatchDoesNotKeepPassOrReveal();
 testQuitDismissesTable();
