@@ -1,4 +1,4 @@
-import { handleAction, humanCanOffTurnDump, type Room } from "./declare-engine";
+import { handleAction, hasSeen, humanCanOffTurnDump, type Room } from "./declare-engine";
 
 const SNIPE_WAIT_MS = 8000;
 
@@ -10,6 +10,43 @@ function signature(room: Room): string {
   const G = room.G;
   if (!G) return "";
   return [G.phase, G.turn, G.powerStep || "", G.pile.length, G.pick.join(",")].join(":");
+}
+
+function computerMatchOpenDraw(room: Room, pid: number): boolean {
+  const G = room.G;
+  if (!G || G.discardOnDraw || !G.pile.length) return false;
+  const top = G.pile[G.pile.length - 1];
+  const own = G.players[pid].slots.findIndex((c) => c && c.r === top.r && hasSeen(c, pid));
+  if (own >= 0) return handleAction(room, pid, { action: "drag", gesture: "discard", p: pid, i: own }) === true;
+  const canGive = G.players[pid].slots.some((c) => c && !c.known[pid]);
+  if (!canGive) return false;
+  for (let p = 0; p < G.n; p++) {
+    if (p === pid) continue;
+    const seen = G.players[p].slots.findIndex((c) => c && c.r === top.r && hasSeen(c, pid));
+    if (seen >= 0) return handleAction(room, pid, { action: "drag", gesture: "offDump", p, i: seen }) === true;
+  }
+  return false;
+}
+
+function computerPlayChain(room: Room, pid: number): boolean {
+  const G = room.G;
+  if (!G || !G.chainRank || G.discardOnDraw) return false;
+  const rank = G.chainRank;
+  let own: string | null = null;
+  let opp: string | null = null;
+  for (const key of G.pick) {
+    const [p, i] = key.split(":").map(Number);
+    const card = G.players[p] && G.players[p].slots[i];
+    if (!card || card.r !== rank || !hasSeen(card, pid)) continue;
+    if (p === pid) own = own || key;
+    else opp = opp || key;
+  }
+  const key = opp || own;
+  if (!key) return false;
+  const [p, i] = key.split(":").map(Number);
+  if (p === pid) return handleAction(room, pid, { action: "drag", gesture: "discard", p, i }) === true;
+  if (!G.players[pid].slots.some((c) => c && !c.known[pid])) return false;
+  return handleAction(room, pid, { action: "drag", gesture: "offDump", p, i }) === true;
 }
 
 function computerAct(room: Room, pid: number): void {
@@ -24,7 +61,7 @@ function computerAct(room: Room, pid: number): void {
     handleAction(room, pid, { action: "pass" });
     return;
   }
-  const own = G.players[pid].slots.findIndex((c) => c && c.r === top.r);
+  const own = G.players[pid].slots.findIndex((c) => c && c.r === top.r && hasSeen(c, pid));
   if (own >= 0) {
     handleAction(room, pid, { action: "drag", gesture: "discard", p: pid, i: own });
     return;
@@ -99,11 +136,11 @@ export function playComputerTurns(room: Room, now = Date.now()): boolean {
     const before = signature(room);
     if (G.phase === "draw") {
       if (G.players[pid].slots.every((c) => !c) && G.declarer === null) handleAction(room, pid, { action: "declare" });
-      else handleAction(room, pid, { action: "draw" });
+      else if (!computerMatchOpenDraw(room, pid)) handleAction(room, pid, { action: "draw" });
     } else if (G.phase === "act") {
       computerAct(room, pid);
     } else if (G.phase === "chain") {
-      handleAction(room, pid, { action: "passChain" });
+      if (!computerPlayChain(room, pid)) handleAction(room, pid, { action: "passChain" });
     } else if (G.phase === "power" && G.powerStep === "k-trade") {
       handleAction(room, pid, { action: "skipTrade" });
     } else if (G.phase === "power" || G.phase === "pick") {

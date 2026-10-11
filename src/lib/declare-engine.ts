@@ -48,6 +48,8 @@ export interface Game {
   intent: string | null;
   pick: string[];
   free: boolean;
+  // One discard or dump has already landed on the current drawn center card.
+  discardOnDraw?: boolean;
   dumpGive: {
     actor: number;
     oppPid: number;
@@ -365,15 +367,18 @@ function fillPowerPicks(G: Game): void {
 
 function matchRankForDump(G: Game): string | null {
   const top = pileTop(G);
+  if (G.discardOnDraw) return null;
   if (G.phase === "chain" && G.chainRank) return G.chainRank;
   if (G.phase === "dumpGive" && G.dumpGive) return G.dumpGive.rank;
   if (G.phase === "act" && top) return top.r;
-  if (G.phase === "draw" && G.free && top) return top.r;
+  if (G.phase === "draw" && top) return top.r;
+  if (G.phase === "power" && top) return top.r;
   if (G.phase === "pick" && G.intent === "discard" && top) return top.r;
   return null;
 }
 
 function addDumpPicks(G: Game, actor: number | null): void {
+  if (G.discardOnDraw) return;
   const rank = matchRankForDump(G);
   if (!rank || actor == null) return;
   // During an open dump, every unlocked opponent card is legal: a match succeeds, a miss keeps both.
@@ -420,7 +425,7 @@ function refreshActDumpPicks(G: Game): void {
   if (!G) return;
   if (G.phase === "act" || (G.phase === "draw" && G.free && G.declarer === null)) {
     G.pick = [];
-    addDumpPicks(G, G.turn);
+    if (!G.discardOnDraw) addDumpPicks(G, G.turn);
   }
 }
 
@@ -494,6 +499,7 @@ export function makeDeal(n: number, cardsN: number): Game {
     intent: null,
     pick: [],
     free: false,
+    discardOnDraw: false,
     dumpGive: null,
     power: null,
     powerStep: null,
@@ -561,6 +567,7 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
     turn: G.turn,
     phase: G.phase,
     free: G.free,
+    discardOnDraw: !!G.discardOnDraw,
     declarer: G.declarer,
     intent: G.intent,
     pick: G.phase === "chain" ? [] : G.pick,
@@ -624,9 +631,11 @@ export function publicState(room: Room, viewerId: number): Record<string, unknow
         const keepFlash =
           G.phase === "keepBoth" && !!kb && kb.pid === p.id && (i === kb.handI || i === kb.placedI);
         const known = G.phase === "reveal" || c.known[viewerId] || memorizeReveal || keepFlash;
-        // `seen` stays on the server. A hidden card is still only { known: false } plus an id
-        // the viewer's own browser can match to a card it was already shown.
-        return known ? { r: c.r, s: c.s, known: true, id: c.id || null } : { known: false, id: c.id || null };
+        // A face-down card this viewer has already seen keeps its rank for that viewer only.
+        // Everyone else still receives { known: false } and an id, with no rank.
+        if (known) return { r: c.r, s: c.s, known: true, id: c.id || null };
+        if (hasSeen(c, viewerId)) return { r: c.r, s: c.s, known: false, remembered: true, id: c.id || null };
+        return { known: false, id: c.id || null };
       }),
     })),
   };
@@ -706,7 +715,7 @@ export function endPeekReveal(room: Room): void {
     G.pick = [];
     const top = pileTop(G);
     // Drawn 10 stays on center. A peeked card of the same rank can be discarded once.
-    if (card && top && card.r === top.r) {
+    if (card && top && card.r === top.r && !G.discardOnDraw) {
       const rank = card.r;
       beginChain(room, pr.peeker, rank, true, {
         keepCenter: true,
@@ -724,6 +733,28 @@ export function endPeekReveal(room: Room): void {
     G.free = false;
     finish(room);
     return;
+  }
+  if (pr.next === "finish" && card && !G.discardOnDraw) {
+    const jackTop = pileTop(G);
+    if (jackTop && card.r === jackTop.r) {
+      G.power = null;
+      G.powerStep = null;
+      G.powerTarget = null;
+      G.powerMine = null;
+      G.pick = [];
+      beginChain(room, pr.peeker, card.r, true, {
+        keepCenter: true,
+        log:
+          "Peeked a matching " +
+          card.r +
+          " — discard that " +
+          card.r +
+          " from your hand (or dump an opponent " +
+          card.r +
+          "), or Done. One only.",
+      });
+      return;
+    }
   }
   G.power = null;
   G.powerStep = null;
@@ -866,6 +897,7 @@ function keepCenterCard(room: Room, now = Date.now()): void {
   markSeenAll(extra);
   const placedI = placeDrawnInHand(G, pid, extra);
   G.pile.pop();
+  G.discardOnDraw = false;
   G.phase = "keepBoth";
   G.keepBoth = { pid, handI: placedI, placedI, priorHandKnown: false };
   G.log = "Time's up. You keep " + label(drawn) + " — remember where it is.";
@@ -1012,6 +1044,7 @@ function swapIntoHand(G: Game, pid: number, i: number): Card {
   G.players[pid].slots[i] = taken;
   G.pile[G.pile.length - 1] = card;
   G.free = false;
+  G.discardOnDraw = false;
   G.wiggle = { pid, i, until: Date.now() + WIGGLE_MS };
   return taken;
 }
@@ -1037,6 +1070,10 @@ function beginChain(
   G.chainSkipFree = null;
   if (pileTop(G)) G.free = true; // discarded/dumped/swapped top Pickable for next
   if (!allowOne) return finish(room);
+  if (G.discardOnDraw) {
+    if (keepCenter) G.free = false;
+    return finish(room);
+  }
 
   // Post-swap / Pick-swap / post-10-peek: one chance, and only for a card this
   // player has seen. An unseen match must not keep the turn (or Pass) open.
@@ -1144,9 +1181,9 @@ function autoGiveOffTurn(room: Room, now: number): void {
 }
 
 function offTurnWindow(G: Game): boolean {
-  if (G.pending) return false;
-  if (G.phase === "act" || G.phase === "chain") return !!pileTop(G);
-  if (G.phase === "draw" && G.free) return !!pileTop(G);
+  if (G.pending || G.discardOnDraw || !pileTop(G)) return false;
+  if (G.phase === "act" || G.phase === "chain" || G.phase === "power") return true;
+  if (G.phase === "draw") return true;
   return false;
 }
 
@@ -1183,6 +1220,7 @@ function offTurnKnownDump(room: Room, actor: number, oppPid: number, i: number, 
   const resumeTurnWaitKey = G.turnWaitKey ?? null;
   G.players[oppPid].slots[i] = null;
   G.pile.push(card);
+  G.discardOnDraw = true;
   G.pick = [];
   G.players[actor].slots.forEach((c, slot) => {
     if (c && isFaceDownFor(c, actor)) G.pick.push(actor + ":" + slot);
@@ -1215,9 +1253,10 @@ function knownMatchDump(room: Room, actor: number, oppPid: number, i: number): b
   if (actor !== G.turn) return false;
   if (!Number.isInteger(oppPid) || oppPid < 0 || oppPid >= G.n || oppPid === actor) return false;
   if (handLocked(G, oppPid)) return false;
+  if (G.discardOnDraw) return false;
   const allowed =
     G.phase === "act" ||
-    (G.phase === "draw" && G.free) ||
+    G.phase === "draw" ||
     G.phase === "chain" ||
     (G.phase === "pick" && G.intent === "discard");
   if (!allowed || !pileTop(G)) return false;
@@ -1228,6 +1267,7 @@ function knownMatchDump(room: Room, actor: number, oppPid: number, i: number): b
   if (!G.players[actor].slots.some((c) => c && isFaceDownFor(c, actor))) return false;
   G.players[oppPid].slots[i] = null;
   G.pile.push(card);
+  G.discardOnDraw = true;
   G.free = true;
   G.log = "Dumped " + label(card) + " from " + G.players[oppPid].name + " onto the center.";
   startDumpGive(room, actor, oppPid, i, rank);
@@ -1236,6 +1276,7 @@ function knownMatchDump(room: Room, actor: number, oppPid: number, i: number): b
 
 function tryDumpOpponent(room: Room, actor: number, oppPid: number, i: number): boolean {
   const G = room.G!;
+  if (G.discardOnDraw) return false;
   if (oppPid === actor || handLocked(G, oppPid)) return false;
   const rank = matchRankForDump(G);
   if (!rank) return false;
@@ -1259,6 +1300,7 @@ function tryDumpOpponent(room: Room, actor: number, oppPid: number, i: number): 
   }
   G.players[oppPid].slots[i] = null;
   G.pile.push(card);
+  G.discardOnDraw = true;
   G.free = true; // dumped center card Pickable by next after this turn
   G.log = "Dumped " + label(card) + " from " + G.players[oppPid].name + " onto the center.";
   startDumpGive(room, actor, oppPid, i, rank);
@@ -1328,13 +1370,33 @@ function dragDiscard(room: Room, pid: number, i: number): boolean {
   const G = room.G!;
   const card = G.players[pid] && G.players[pid].slots[i];
   const drawn = pileTop(G);
-  if (!card || !drawn || pid !== G.turn) return false;
+  if (!card || !drawn || G.discardOnDraw || pid !== G.turn) return false;
+  if (G.phase === "draw" && !G.free) {
+    if (!hasSeen(card, pid)) return false;
+    if (card.r !== drawn.r) {
+      wrongDiscardKeepBoth(room, pid, i);
+      return true;
+    }
+    G.players[pid].slots[i] = null;
+    G.pile.push(card);
+    G.discardOnDraw = true;
+    G.free = true;
+    G.log =
+      "Discarded " +
+      label(card) +
+      " on top of " +
+      label(drawn) +
+      ". One match action — turn ends; next can Pick it.";
+    beginChain(room, pid, card.r);
+    return true;
+  }
   if (G.phase === "chain") {
     if (G.pick.indexOf(pid + ":" + i) < 0) return false;
     if (!hasSeen(card, pid) || card.r !== G.chainRank) return false;
     const afterPeek = G.chainSkipFree === false;
     G.players[pid].slots[i] = null;
     G.pile.push(card);
+    G.discardOnDraw = true;
     G.free = true;
     G.chainSkipFree = null;
     G.log =
@@ -1354,6 +1416,7 @@ function dragDiscard(room: Room, pid: number, i: number): boolean {
   if (card.r === drawn.r) {
     G.players[pid].slots[i] = null;
     G.pile.push(card);
+    G.discardOnDraw = true;
     G.free = true;
     G.log =
       "Discarded " +
@@ -1365,6 +1428,38 @@ function dragDiscard(room: Room, pid: number, i: number): boolean {
     return true;
   }
   wrongDiscardKeepBoth(room, pid, i);
+  return true;
+}
+
+// One follow-up after a King trade or skip, when this player has seen a match
+// for the drawn center card. A discard that already landed closes it.
+function offerDrawnFollowUp(room: Room, pid: number, keepCenter: boolean): void {
+  const G = room.G!;
+  const top = pileTop(G);
+  if (!top || G.discardOnDraw) {
+    if (keepCenter) G.free = false;
+    else if (top) G.free = true;
+    finish(room);
+    return;
+  }
+  beginChain(room, pid, top.r, true, keepCenter ? { keepCenter: true } : undefined);
+}
+
+function offTurnSeenDiscard(room: Room, actor: number, i: number): boolean {
+  const G = room.G!;
+  if (actor === G.turn || !offTurnWindow(G)) return false;
+  const card = G.players[actor] && G.players[actor].slots[i];
+  const top = pileTop(G);
+  if (!card || !top || !hasSeen(card, actor) || card.r !== top.r) return false;
+  G.players[actor].slots[i] = null;
+  G.pile.push(card);
+  G.discardOnDraw = true;
+  G.log =
+    "Discarded " +
+    label(card) +
+    " on top of " +
+    label(top) +
+    ". One match action — turn ends; next can Pick it.";
   return true;
 }
 
@@ -1429,6 +1524,9 @@ function applyKingTrade(room: Room, pid: number): boolean {
   G.players[opp.pid].slots[opp.i] = myCard;
   conceal(G.players[mine.pid].slots[mine.i]!);
   conceal(G.players[opp.pid].slots[opp.i]!);
+  // The peeker still knows both cards, at whichever seats the trade left them.
+  markSeen(G.players[mine.pid].slots[mine.i]!, pid);
+  markSeen(G.players[opp.pid].slots[opp.i]!, pid);
   G.log = G.players[pid].name + " traded after King peeks. K stays pickable for next.";
   G.free = true;
   G.power = null;
@@ -1436,7 +1534,7 @@ function applyKingTrade(room: Room, pid: number): boolean {
   G.powerTarget = null;
   G.powerMine = null;
   G.pick = [];
-  finish(room);
+  offerDrawnFollowUp(room, pid, false);
   return true;
 }
 
@@ -1465,6 +1563,12 @@ function handleDrag(room: Room, pid: number, msg: { action: string; [k: string]:
     if (!Number.isInteger(slot) || slot < 0) return false;
     if (pid === G.turn) return knownMatchDump(room, pid, opp, slot);
     return offTurnKnownDump(room, pid, opp, slot);
+  }
+  if (gesture === "discard" && pid !== G.turn) {
+    const slot = Number(msg.i);
+    if (msg.p != null && Number(msg.p) !== pid) return false;
+    if (!Number.isInteger(slot) || slot < 0) return false;
+    return offTurnSeenDiscard(room, pid, slot);
   }
   if (pid !== G.turn) {
     if (gesture === "give" && G.phase === "dumpGive" && G.dumpGive?.offTurn && G.dumpGive.actor === pid) {
@@ -1583,10 +1687,12 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
 
   const giving = !!(G.phase === "dumpGive" && G.dumpGive && G.dumpGive.actor === pid);
   const offDump = act === "offDiscard" || (act === "drag" && msg.gesture === "offDump");
+  const offDiscard = act === "drag" && msg.gesture === "discard";
   if (
     pid !== G.turn &&
     !giving &&
     !offDump &&
+    !offDiscard &&
     !(
       (G.phase === "pick" || G.phase === "power" || G.phase === "chain") &&
       G.pick.some((x) => x.startsWith(pid + ":"))
@@ -1609,6 +1715,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     if (G.phase !== "draw" || pid !== G.turn) return;
     if (!G.deck.length) return reveal(room);
     G.free = false;
+    G.discardOnDraw = false;
     const card = G.deck.pop()!;
     G.pile.push(card);
     G.phase = "act";
@@ -1749,12 +1856,22 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
       completeDumpGive(room, i);
       return;
     }
+    if (G.phase === "draw" && !G.free && !G.discardOnDraw && pileTop(G)) {
+      if (pid !== G.turn) return;
+      if (targetPid !== pid) {
+        knownMatchDump(room, pid, targetPid, i);
+        return;
+      }
+      dragDiscard(room, pid, i);
+      return;
+    }
     if (G.phase === "act" || (G.phase === "draw" && G.free)) {
       if (pid !== G.turn) return;
       if (targetPid !== pid && tryDumpOpponent(room, pid, targetPid, i)) return;
     }
     if (G.phase === "chain") {
       // Post-swap or post-10-peek one-shot match only (allowOne). After this action, turn ends.
+      if (G.discardOnDraw) return;
       if (pid !== G.turn) return;
       if (G.pick.indexOf(key) < 0) return;
       if (targetPid !== pid) {
@@ -1766,6 +1883,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
       const afterPeek = G.chainSkipFree === false;
       G.players[pid].slots[i] = null;
       G.pile.push(ch);
+      G.discardOnDraw = true;
       G.free = true;
       G.chainSkipFree = null;
       G.log =
@@ -1849,6 +1967,7 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
       if (card.r === drawn.r) {
         G.players[pid].slots[i] = null;
         G.pile.push(card);
+        G.discardOnDraw = true;
         G.free = true; // discarded top is Pickable by next player
         G.log =
           "Discarded " +
@@ -1917,7 +2036,8 @@ function runHandleAction(room: Room, pid: number, msg: { action: string; [k: str
     G.powerTarget = null;
     G.powerMine = null;
     G.pick = [];
-    return finish(room);
+    offerDrawnFollowUp(room, pid, false);
+    return;
   }
 
   if (act === "confirmTrade") {
