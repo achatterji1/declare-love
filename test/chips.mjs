@@ -881,15 +881,28 @@ function testLobbyCopyStaysQuiet() {
 function testSignInGatesPlay() {
   const html = readFileSync(new URL("../public/declare/index.html", import.meta.url), "utf8");
   assert.equal(html.includes('id="signin"'), true);
-  assert.equal(html.includes('id="setup" class="panel" hidden'), true);
+  assert.equal(html.includes('id="setup" class="panel"'), true);
+  assert.equal(html.includes('id="setup" class="panel" hidden'), false);
   assert.equal(html.includes("Earn a chip bonus"), false);
   assert.equal(/facebook/i.test(html), false);
   assert.equal(html.includes('id="googleBtn" hidden'), true);
-  assert.equal(html.includes("Sign in to play."), true);
-  for (const name of ["function deal(n)", "function createInvite()", "function joinInvite()", "function sitTier(tier)", "function sitCode(code)", "function leaveCode(code)"]) {
-    const start = html.indexOf(name);
-    assert.ok(start >= 0, name);
-    assert.equal(html.slice(start, start + 180).includes("if (!requirePlay()) return;"), true, name + " is gated");
+  assert.equal(html.includes("Sign in to play."), false);
+  assert.equal(html.includes("Trial Game stay open without an account."), true);
+  const deal = html.indexOf("function deal(n, asTrial)");
+  assert.ok(deal >= 0);
+  assert.equal(html.slice(deal, deal + 240).includes("requirePlay()"), false);
+  assert.equal(html.slice(deal, deal + 280).includes('accountGate(trial ? "trial" : "computer")'), true);
+  for (const item of [
+    ["function createInvite()", 'requireAccount("create")'],
+    ["function joinInvite()", 'requireAccount("join")'],
+    ["function sitTier(tier)", 'requireAccount("sit")'],
+    ["function sitCode(code)", 'requireAccount("sit")'],
+    ["function leaveCode(code)", 'requireAccount("leave")'],
+    ["function claimBonus()", 'requireAccount("claim")'],
+  ]) {
+    const start = html.indexOf(item[0]);
+    assert.ok(start >= 0, item[0]);
+    assert.equal(html.slice(start, start + 160).includes(item[1]), true, item[0] + " stays behind sign-in");
   }
   assert.equal(googleSignInEnabled({ external: { google: false, email: false, facebook: false } }), false);
   assert.equal(googleSignInEnabled({ external: { google: true } }), true);
