@@ -1,0 +1,53 @@
+name: Supabase keep-alive
+
+# Free-plan projects are paused after about a week without database activity.
+# A PostgREST read counts. This does not write, and it uses only the publishable
+# key already committed in .env (anon role). declare_views is the table that
+# role can read under the existing RLS policy.
+on:
+  schedule:
+    # 12:00 UTC every other calendar day (about every 2 days).
+    - cron: "0 12 */2 * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    name: Read declare_views
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /rest/v1/declare_views
+        env:
+          SUPABASE_URL: https://nhrzeakxthmtipwkrxzf.supabase.co
+          # Same publishable key as .env. Safe to commit; it is the anon key.
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_QDmM-rxcYczDHxrRH6ibhw_vuCfO8cM
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          headers="$(mktemp)"
+          status="$(
+            curl --silent --show-error --location \
+              --output "$body" \
+              --dump-header "$headers" \
+              --write-out "%{http_code}" \
+              --get "${SUPABASE_URL}/rest/v1/declare_views" \
+              --data-urlencode "select=code" \
+              --data-urlencode "limit=0" \
+              --header "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Accept: application/json" \
+              --header "Prefer: count=exact"
+          )"
+          echo "HTTP ${status}"
+          grep -i -E '^(HTTP/|content-range:|content-type:|preference-applied:|sb-project-ref:)' "$headers" || true
+          echo "body:"
+          cat "$body"
+          echo
+          case "$status" in
+            2*) ;;
+            *)
+              echo "Keep-alive failed: PostgREST returned HTTP ${status}, expected 2xx." >&2
+              exit 1
+              ;;
+          esac
