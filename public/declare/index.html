@@ -77,11 +77,43 @@
   .outline { background: var(--cream); border-color: var(--olive); color: var(--olive-dark); font-weight: 700; }
   .outline:hover:not(:disabled) { background: var(--panel-soft); border-color: var(--olive); color: var(--olive-dark); }
   .brand-actions { display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; }
-  #signOutBtn { margin-top: 16px; }
+  #signOutBtn, #signInBtn { margin-top: 16px; }
   #signedInAs { color: var(--muted); font-size: .78rem; letter-spacing: .04em; }
-  #signin { padding: 0; overflow: hidden; }
-  .signin-body { max-width: 420px; margin: 0 auto; padding: 28px; }
+  #signin {
+    position: fixed; inset: 0; z-index: 30; margin: 0; padding: 18px;
+    display: grid; place-items: center;
+    background: rgba(69, 60, 46, .35);
+    border: 0; box-shadow: none; border-radius: 0;
+  }
+  #signin[hidden] { display: none; }
+  .auth-backdrop { position: absolute; inset: 0; }
+  .signin-card {
+    position: relative; z-index: 1; width: min(460px, 100%);
+    max-height: calc(100vh - 28px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow); padding: 0;
+  }
+  .signin-body { max-width: 420px; margin: 0 auto; padding: 8px 28px 28px; }
+  #authLead { margin: 6px 0 0; color: var(--muted); }
   #authMsg { color: var(--muted); min-height: 1.2em; text-align: center; margin: 12px 0 0; }
+  .guest-note { margin: 8px 0 0; color: var(--muted); }
+  #trialPanel {
+    position: sticky; top: 8px; z-index: 6;
+    margin: 0 0 14px; padding: 14px 16px;
+    background: var(--panel-soft); border: 1px solid var(--line); border-radius: 12px;
+  }
+  #trialPanel[hidden] { display: none; }
+  .trial-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .trial-head h2 { font-size: 1.35rem; }
+  #trialText { margin: 8px 0 12px; }
+  .trial-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .trial-actions button { margin: 0; min-height: 44px; }
+  .trial-log {
+    max-height: 9.5rem; overflow: auto; color: var(--muted); font-size: .9rem;
+    border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px;
+  }
+  .trial-log p { margin: 0 0 8px; }
+  .mode-note { color: var(--muted); margin: 8px 0 0; font-size: .92rem; }
   .panel {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -415,6 +447,9 @@
     .manual { padding: 10px; }
     .manual-sheet { padding: 16px 14px 12px; }
     button, input { padding: 9px 11px; }
+    #signin { padding: 12px; }
+    .signin-body { padding: 4px 16px 18px; }
+    #trialPanel { position: sticky; top: auto; bottom: 8px; }
   }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
 </style>
@@ -427,14 +462,19 @@
     <div class="brand-actions">
       <button type="button" class="manual-launch" id="openManual" onclick="openManual()">Learning manual</button>
       <span id="signedInAs" hidden></span>
+      <button type="button" class="outline" id="signInBtn" onclick="promptSignIn()">Sign in</button>
       <button type="button" class="outline" id="signOutBtn" hidden onclick="signOut()">Sign out</button>
     </div>
   </header>
   <p id="err"></p>
-  <section id="signin" class="panel">
-    <div class="setup-intro"><div><h2>Sign in</h2></div></div>
+  <section id="signin" hidden>
+    <div class="auth-backdrop" onclick="closeAuthPrompt()"></div>
+    <div class="signin-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="setup-intro">
+      <div><h2 id="authTitle">Sign in</h2><p id="authLead">Sign in or create an account to play with friends or use chip tables. A computer game and the Trial Game stay open without an account.</p></div>
+      <button type="button" id="authClose" onclick="closeAuthPrompt()">Close</button>
+    </div>
     <form class="signin-body" id="signinForm" onsubmit="submitAuth(event)">
-      <p>Sign in to play.</p>
       <div class="field"><label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="username" required maxlength="120"></div>
       <div class="field"><label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required minlength="6" maxlength="72"></div>
       <div class="action-stack">
@@ -444,8 +484,9 @@
       </div>
       <p id="authMsg"></p>
     </form>
+    </div>
   </section>
-  <section id="setup" class="panel" hidden>
+  <section id="setup" class="panel">
     <div class="setup-intro">
       <div><h2>Choose your table</h2></div>
     </div>
@@ -453,7 +494,7 @@
       <article class="mode">
         <div class="mode-icon" aria-hidden="true">♣</div>
         <h2>Play here</h2>
-        <p>Play a hand against the computer on this device.</p>
+        <p>Play a hand against the computer on this device. No account needed.</p>
         <div class="field">
           <label>Cards per player</label>
           <div class="segmented">
@@ -462,6 +503,8 @@
           </div>
         </div>
         <div class="action-stack">
+          <button class="primary" type="button" id="trialBtn" onclick="deal(2, true)">Trial Game</button>
+          <p class="mode-note">A guided hand. After each move, a short note explains the rule. Read it, then tap Got it.</p>
           <button class="primary" type="button" onclick="deal(2)">Play against computer</button>
         </div>
       </article>
@@ -495,6 +538,7 @@
         <button type="button" class="tier" data-tier="gold" onclick="sitTier('gold')"><span class="tier-frame"><img src="tiers/gold.jpg" alt=""></span><span class="tier-name">Gold</span><span class="tier-stake">2500 chips</span></button>
         <button type="button" class="tier" data-tier="vip" onclick="sitTier('vip')"><span class="tier-frame"><img src="tiers/vip.jpg" alt=""></span><span class="tier-name">VIP</span><span class="tier-stake">5000 chips</span></button>
       </div>
+      <p id="guestChipNote" class="guest-note">Sign in to use wallets, Claim 5000, and chip tables.</p>
       <p id="chipStatus"></p>
       <div id="waitingLeave" hidden>
         <button type="button" id="leaveWait" onclick="doQuit()">Leave</button>
@@ -504,6 +548,17 @@
     <p id="choice">Four cards selected — choose a table to begin.</p>
   </section>
   <section id="table" class="panel" style="display:none">
+    <aside id="trialPanel" hidden>
+      <div class="trial-head">
+        <h2>Trial Game</h2>
+        <button type="button" class="outline" id="trialExit" onclick="exitTrial()">Exit trial</button>
+      </div>
+      <p id="trialText" aria-live="polite"></p>
+      <div class="trial-actions">
+        <button type="button" class="primary" id="trialNext" onclick="trialAdvance()">Got it</button>
+      </div>
+      <div id="trialLog" class="trial-log"></div>
+    </aside>
     <p id="chipBar" hidden></p>
     <div id="memorizeBar">
       <span id="memorizeTimer">0:30</span>
@@ -724,6 +779,7 @@
   </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="trial.js"></script>
 <script>
 var RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 var SUITS = ["H","D","C","S"];
@@ -780,6 +836,144 @@ function say(t) {
   el.textContent = String(t).trim();
 }
 function err(t) { document.getElementById("err").textContent = t || ""; }
+var trial = false;
+var trialQueue = [];
+var trialHold = false;
+var trialFrozenAt = 0;
+var trialResume = [];
+var trialLogItems = [];
+var pausedReveal = null;
+function pub(card) { return card ? { r: card.r, s: card.s } : null; }
+function whoPid(pid) { return pid === 1 ? "computer" : "you"; }
+function note(event) {
+  if (!trial || !event) return;
+  var api = globalThis.DeclareTrial;
+  if (!api || !api.explainMove) return;
+  var text = api.explainMove(event);
+  if (!text) return;
+  trialQueue.push(text);
+  pumpTrial();
+}
+function paintTrialLog() {
+  var log = document.getElementById("trialLog");
+  if (!log) return;
+  log.innerHTML = "";
+  for (var i = trialLogItems.length - 1; i >= 0; i--) {
+    var p = document.createElement("p");
+    p.textContent = trialLogItems[i];
+    log.appendChild(p);
+  }
+}
+function resetTrialChrome() {
+  trialQueue = [];
+  trialHold = false;
+  trialFrozenAt = 0;
+  trialResume = [];
+  pausedReveal = null;
+  trialLogItems = [];
+  paintTrialLog();
+  var panel = document.getElementById("trialPanel");
+  if (panel) panel.hidden = true;
+  var body = document.getElementById("trialText");
+  if (body) body.textContent = "";
+}
+function shiftDeadlines(delta) {
+  if (!delta) return;
+  if (G) {
+    if (G.turnEndsAt != null) G.turnEndsAt += delta;
+    if (G.memorizeEndsAt != null) G.memorizeEndsAt += delta;
+    if (G.actEndsAt != null) G.actEndsAt += delta;
+    if (G.dumpGive && G.dumpGive.endsAt != null) G.dumpGive.endsAt += delta;
+  }
+  if (memorizeEndsAt) memorizeEndsAt += delta;
+  if (turnTickerEnds) turnTickerEnds += delta;
+  if (actTickerEnds) actTickerEnds += delta;
+}
+function pauseTimedReveals() {
+  if (peekTimer) { clearPeekTimer(); pausedReveal = "peek"; }
+  else if (keepBothTimer) { clearKeepBothTimer(); pausedReveal = "keep"; }
+}
+function resumeTimedReveals() {
+  var kind = pausedReveal;
+  pausedReveal = null;
+  if (!kind || !G) return;
+  if (kind === "peek" && G.phase === "peekReveal") endPeekReveal();
+  else if (kind === "keep" && G.phase === "keepBoth") endKeepBothReveal();
+}
+function applyTrialHoldChrome() {
+  if (!trialHold) return;
+  disablePlayButtons(true);
+  var ready = document.getElementById("readyBtn");
+  if (ready) ready.disabled = true;
+  var yes = document.getElementById("confirmYes");
+  var no = document.getElementById("confirmNo");
+  if (yes) yes.disabled = true;
+  if (no) no.disabled = true;
+}
+function pumpTrial() {
+  if (!trial || trialHold || !trialQueue.length) return;
+  var text = trialQueue.shift();
+  trialHold = true;
+  trialFrozenAt = Date.now();
+  pauseTimedReveals();
+  var panel = document.getElementById("trialPanel");
+  var body = document.getElementById("trialText");
+  if (body) body.textContent = text;
+  if (panel) {
+    panel.hidden = false;
+    if (panel.scrollIntoView) panel.scrollIntoView({ block: "nearest" });
+  }
+  applyTrialHoldChrome();
+  var btn = document.getElementById("trialNext");
+  if (btn) btn.focus();
+}
+function flushTrialResume() {
+  if (trialHold || trialQueue.length) return;
+  var fn = trialResume.shift();
+  if (fn) fn();
+}
+function trialAdvance() {
+  if (!trialHold) return;
+  var shown = document.getElementById("trialText");
+  var text = shown ? shown.textContent : "";
+  if (text) { trialLogItems.push(text); paintTrialLog(); }
+  var delta = trialFrozenAt ? Date.now() - trialFrozenAt : 0;
+  trialFrozenAt = 0;
+  shiftDeadlines(delta);
+  trialHold = false;
+  if (trialQueue.length) { pumpTrial(); return; }
+  resumeTimedReveals();
+  if (trialHold || trialQueue.length) return;
+  if (shown) shown.textContent = "Take your time. Scroll the notes below, then make your move.";
+  if (G) render();
+  flushTrialResume();
+}
+function exitTrial() {
+  trial = false;
+  trialQueue = [];
+  trialHold = false;
+  trialResume = [];
+  pausedReveal = null;
+  doQuit();
+}
+function armKeepTimer() {
+  clearKeepBothTimer();
+  if (trialHold || (trial && trialQueue.length)) { pausedReveal = "keep"; return; }
+  keepBothTimer = setTimeout(function() {
+    if (!G || G.phase !== "keepBoth") return;
+    if (trialHold) { pausedReveal = "keep"; return; }
+    endKeepBothReveal();
+  }, KEEP_BOTH_MS);
+}
+function armPeekTimer() {
+  clearPeekTimer();
+  if (trialHold || (trial && trialQueue.length)) { pausedReveal = "peek"; return; }
+  peekTimer = setTimeout(function() {
+    if (!G || G.phase !== "peekReveal") return;
+    if (trialHold) { pausedReveal = "peek"; return; }
+    endPeekReveal();
+  }, PEEK_MS);
+}
 
 function formatCountdown(ms) {
   var s = Math.max(0, Math.ceil(ms / 1000));
@@ -802,6 +996,7 @@ function startMemorizeTicker(endsAt, onExpire) {
   updateMemorizeTimerDisplay();
   memorizeTicker = setInterval(function() {
     updateMemorizeTimerDisplay();
+    if (trialHold) return;
     if (memorizeEndsAt && Date.now() >= memorizeEndsAt) {
       stopMemorizeTicker();
       if (onExpire) onExpire();
@@ -813,7 +1008,7 @@ function setMemorizeBar(on, hint, readyDisabled) {
   bar.className = on ? "on" : "";
   if (!on) { document.getElementById("readyBtn").disabled = true; return; }
   document.getElementById("memorizeHint").textContent = hint || "Memorize your bottom two cards.";
-  document.getElementById("readyBtn").disabled = !!readyDisabled;
+  document.getElementById("readyBtn").disabled = !!readyDisabled || trialHold;
 }
 function disablePlayButtons(disabled) {
   ["draw","leave","power","call"].forEach(function(id) {
@@ -834,6 +1029,7 @@ function stopTurnTicker() {
 function updateTurnTimerDisplay() {
   var el = document.getElementById("turnTimer");
   if (!el) return;
+  if (trialHold && turnTimerVisible) { el.className = "on"; el.textContent = "Paused while you read"; return; }
   if (!turnTickerEnds || !turnTimerVisible) { el.textContent = ""; el.className = ""; return; }
   var left = turnTickerEnds - Date.now();
   el.className = left <= 10000 ? "on urgent" : "on";
@@ -845,6 +1041,7 @@ function startTurnTicker(endsAt, onExpire) {
   updateTurnTimerDisplay();
   turnTicker = setInterval(function() {
     updateTurnTimerDisplay();
+    if (trialHold) return;
     if (turnTickerEnds && Date.now() >= turnTickerEnds) {
       var cb = onExpire;
       stopTurnTicker();
@@ -861,6 +1058,10 @@ function showTurnClock(endsAt, active, onExpire) {
     return;
   }
   if (Date.now() >= endsAt) {
+    if (trialHold) {
+      if (el && active) { el.className = "on"; el.textContent = "Paused while you read"; }
+      return;
+    }
     stopTurnTicker();
     if (el && active) { el.className = "on urgent"; el.textContent = "0:00 " + (turnTimerSuffix || "to move"); }
     if (onExpire) onExpire();
@@ -884,6 +1085,7 @@ function startActTicker(endsAt, onExpire) {
   updateActTimerDisplay();
   actTicker = setInterval(function() {
     updateActTimerDisplay();
+    if (trialHold) return;
     if (actTickerEnds && Date.now() >= actTickerEnds) {
       var cb = onExpire;
       stopActTicker();
@@ -953,7 +1155,11 @@ function api(path, body) {
     return r.json().then(function(j) {
       if (r.status === 401) {
         saveAuth(null);
-        showSignedOut();
+        paintAccountChrome();
+        if (mode === "online") returnToSetup(true);
+        if (!(G && mode === "local")) {
+          promptSignIn("Sign in or create an account to use rooms and chip tables. A computer game and the Trial Game stay open without an account.");
+        }
       }
       if (!r.ok) throw new Error(j.error || "Request failed (" + r.status + ")");
       return j;
@@ -1172,7 +1378,7 @@ function playerChipError(message) {
   return message;
 }
 function claimBonus() {
-  if (!requirePlay()) return;
+  if (!requireAccount("claim")) return;
   api("chips", { op: "claim", playerId: playerId }).then(function(res) {
     if (res.wallet) showWallet(res.wallet);
     var hint = document.getElementById("claimHint");
@@ -1199,7 +1405,7 @@ function enterTable(res) {
   });
 }
 function sitTier(tier) {
-  if (!requirePlay()) return;
+  if (!requireAccount("sit")) return;
   err("");
   setChipStatus("");
   ensurePlayerId();
@@ -1208,7 +1414,7 @@ function sitTier(tier) {
   });
 }
 function sitCode(code) {
-  if (!requirePlay()) return;
+  if (!requireAccount("sit")) return;
   err("");
   setChipStatus("");
   ensurePlayerId();
@@ -1217,7 +1423,7 @@ function sitCode(code) {
   });
 }
 function leaveCode(code) {
-  if (!requirePlay()) return;
+  if (!requireAccount("leave")) return;
   err("");
   setChipStatus("");
   ensurePlayerId();
@@ -1232,7 +1438,7 @@ function leaveCode(code) {
   });
 }
 function createInvite() {
-  if (!requirePlay()) return;
+  if (!requireAccount("create")) return;
   mode = "online";
   err("");
   var n = parseInt(document.getElementById("numPlayers").value, 10);
@@ -1247,7 +1453,7 @@ function createInvite() {
 }
 
 function joinInvite() {
-  if (!requirePlay()) return;
+  if (!requireAccount("join")) return;
   mode = "online";
   err("");
   var code = document.getElementById("joinCode").value.trim().toUpperCase();
@@ -1536,6 +1742,7 @@ function syncChrome(c, memorizing) {
   document.getElementById("power").disabled = pending || !canUsePower(c);
   document.getElementById("power").style.display = "";
   if (redeal) redeal.style.display = c.phase === "reveal" ? "" : "none";
+  if (trialHold) applyTrialHoldChrome();
 }
 function slotWantsPick(c, pid, i) {
   if (!c || !c.pick || c.pick.indexOf(pid + ":" + i) < 0) return false;
@@ -1602,6 +1809,7 @@ function specFromEl(el) {
   return null;
 }
 function onDragDown(ev) {
+  if (trialHold) return;
   if (drag) return;
   if (ev.pointerType === "mouse" && ev.button !== 0) return;
   var spec = specFromEl(ev.currentTarget);
@@ -1830,6 +2038,7 @@ function localSwapOrClaim(gesture, i) {
   if (mode === "local") taken.known[1] = true;
   var dumped = pileTop();
   say((gesture === "claim" ? "Picked " : "Swapped in ") + label(taken) + " — " + label(dumped) + " on center.");
+  note({ kind: gesture === "claim" ? "pick" : "swap", actor: "you", card: pub(taken), other: pub(dumped), seen: true, otherSeen: true });
   beginChain(pid, dumped.r, true);
   return true;
 }
@@ -1844,6 +2053,7 @@ function localOffTurnDiscard(i) {
   G.pile.push(card);
   G.discardOnDraw = true;
   say("Discarded " + label(card) + " on top of " + label(top) + ". One match action — turn ends; next can Pick it.");
+  note({ kind: "discard", actor: "you", card: pub(card), other: pub(top), seen: true, otherSeen: true });
   render();
   return true;
 }
@@ -1862,6 +2072,7 @@ function localDiscard(i) {
     G.discardOnDraw = true;
     G.free = true;
     say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
+    note({ kind: "discard", actor: "you", card: pub(card), other: pub(drawn), seen: true, otherSeen: true });
     beginChain(pid, card.r);
     return true;
   }
@@ -1875,6 +2086,7 @@ function localDiscard(i) {
     G.free = true;
     G.chainSkipFree = null;
     say("Discarded matching " + label(card) + (afterPeek ? " after the peek." : " after swap.") + " Turn ends; next can Pick it.");
+    note({ kind: "discard", actor: "you", card: pub(card), other: pub(G.pile.length > 1 ? G.pile[G.pile.length - 2] : null), seen: true, otherSeen: true });
     G.pick = []; G.chainPid = null; G.chainRank = null;
     finish();
     return true;
@@ -1887,6 +2099,7 @@ function localDiscard(i) {
     G.discardOnDraw = true;
     G.free = true;
     say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
+    note({ kind: "discard", actor: "you", card: pub(card), other: pub(drawn), seen: true, otherSeen: true });
     beginChain(pid, card.r);
     return true;
   }
@@ -1966,6 +2179,7 @@ function localQueen(myI, oppPid, oppI) {
   if (cpuKnewTheirs) G.players[G.turn].slots[myI].known[cpuId()] = true;
   if (cpuKnewMine) G.players[oppPid].slots[oppI].known[cpuId()] = true;
   say("Blind-traded with " + G.players[oppPid].name + ".");
+  note({ kind: "queen", actor: "you", power: "Q", hidden: true });
   G.free = false; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
   finish();
   return true;
@@ -2100,8 +2314,9 @@ function renderOnline() {
   paintChipBar();
 }
 
-function doDraw() { if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
+function doDraw() { if (trialHold) return; if (mode === "online") sendAction({ action: "draw" }); else drawCard(); }
 function doPass() {
+  if (trialHold) return;
   if (mode === "online") {
     if (!online || online.pending) return;
     if (online.phase === "chain") { sendAction({ action: "passChain" }); return; }
@@ -2156,6 +2371,8 @@ function returnToSetup(skipLobby) {
   if (chipBar) { chipBar.hidden = true; chipBar.textContent = ""; }
   cardMemory = {};
   wiggleSeen = {};
+  trial = false;
+  resetTrialChrome();
   turnTimerSuffix = "to move";
   setChipStatus("");
   syncLeaveButton(false);
@@ -2174,19 +2391,22 @@ function doArm(intent) {
   else arm(intent);
 }
 function doConfirmChoice() {
+  if (trialHold) return;
   if (mode === "online") sendAction({ action: "confirm" });
   else confirmChoice();
 }
 function doCancelChoice() {
+  if (trialHold) return;
   if (mode === "online") sendAction({ action: "cancel" });
   else cancelChoice();
 }
-function doDeclare() { if (mode === "online") sendAction({ action: "declare" }); else declareRound(); }
-function doPower() { if (mode === "online") sendAction({ action: "power" }); else startPower(); }
+function doDeclare() { if (trialHold) return; if (mode === "online") sendAction({ action: "declare" }); else declareRound(); }
+function doPower() { if (trialHold) return; if (mode === "online") sendAction({ action: "power" }); else startPower(); }
 function doSkipTrade() { if (mode === "online") sendAction({ action: "skipTrade" }); else skipKingTrade(); }
 function doConfirmTrade() { if (mode === "online") sendAction({ action: "confirmTrade" }); else confirmKingTrade(); }
 function doPassChain() { if (mode === "online") sendAction({ action: "passChain" }); else passChain(); }
 function doReady() {
+  if (trialHold) return;
   if (mode === "online") {
     sendAction({ action: "ready" });
     document.getElementById("readyBtn").disabled = true;
@@ -2207,6 +2427,7 @@ function doRedeal() {
   else if (G) deal(G.n);
 }
 function maybeEndLocalMemorize() {
+  if (trialHold) return;
   if (!G || G.phase !== "memorize") return;
   if (!G.memorizeReady.every(Boolean) && Date.now() < G.memorizeEndsAt) return;
   endLocalMemorize();
@@ -2220,14 +2441,20 @@ function endLocalMemorize() {
   memorizeEndsAt = null;
   cpuApplyMemorizeKnowledge();
   say("Cards are face-down — remember them. Draw, Pick a passed/discarded center card, then Pass, Swap in, or Discard.");
+  note({ kind: "memorize-end", actor: "you" });
   setMemorizeBar(false);
   render();
   if (cpu()) cpuSoon(cpuTurn, 500);
 }
 
-function deal(n) {
-  if (!requirePlay()) return;
+function deal(n, asTrial) {
+  if (arguments.length > 1) trial = !!asTrial;
+  var gate = accountGate(trial ? "trial" : "computer");
+  if (!gate.ok) { promptSignIn(gate.prompt); return; }
   mode = "local";
+  var guided = trial;
+  resetTrialChrome();
+  trial = guided;
   try {
     var deck = [];
     for (var s = 0; s < SUITS.length; s++) for (var r = 0; r < RANKS.length; r++) deck.push({r:RANKS[r], s:SUITS[s]});
@@ -2242,7 +2469,7 @@ function deal(n) {
         for (var p = 0; p < n; p++) slots[k].known.push(false);
       }
       // Bottom two revealed only during memorize phase (not permanently known)
-      players.push({id:id, slots:slots, declared:false, name: id === 1 ? "Computer" : "P" + (id + 1)});
+      players.push({id:id, slots:slots, declared:false, name: id === 1 ? "Computer" : (trial ? "You" : "P" + (id + 1))});
     }
     var ends = Date.now() + 30000;
     clearKeepBothTimer();
@@ -2251,6 +2478,7 @@ function deal(n) {
     document.getElementById("setup").style.display = "none";
     document.getElementById("table").style.display = "block";
     say("Memorize your bottom two cards. Click Ready when done (or wait for the timer).");
+    note({ kind: "memorize", actor: "you" });
     startMemorizeTicker(ends, function() { maybeEndLocalMemorize(); });
     // Computer auto-ready after a short delay so the human isn't stuck
     setTimeout(function() {
@@ -2411,6 +2639,7 @@ function completeDumpGive(giveI) {
   if (offTurn) {
     var consumedDraw = resume.resumePhase === "act" || resume.resumePhase === "chain";
     say("Gave a card to " + oppName + ".");
+    note({ kind: "give", actor: whoPid(actor), hidden: true });
     if (consumedDraw) {
       G.free = true;
       G.phase = "draw";
@@ -2421,6 +2650,7 @@ function completeDumpGive(giveI) {
     return true;
   }
   say("Gave a card to " + oppName + ". One match action done — turn ends.");
+  note({ kind: "give", actor: whoPid(actor), hidden: true });
   beginChain(actor, rank);
   return true;
 }
@@ -2442,11 +2672,13 @@ function tryDumpOpponent(pid, i) {
   }
   var hasGive = G.players[actor].slots.some(function(c) { return localFaceDown(c, actor); });
   if (!hasGive) { say("Need a face-down card to give them after dumping."); return false; }
+  var underDump = pileTop();
   G.players[pid].slots[i] = null;
   G.pile.push(card);
   G.discardOnDraw = true;
   G.free = true; // dumped center Pickable by next after turn
   say("Dumped " + label(card) + " from " + G.players[pid].name + " onto the center.");
+  note({ kind: "dump", actor: whoPid(actor), card: pub(card), other: pub(underDump), seen: true, otherSeen: true });
   startDumpGive(actor, pid, i, rank);
   return true;
 }
@@ -2476,12 +2708,9 @@ function wrongOppDumpKeepBoth(actor, oppPid, slotI) {
   G.phase = "keepBoth";
   G.keepBoth = { pid: actor, handI: handI, placedI: placedI, priorHandKnown: false };
   say("Wrong opponent dump. You take " + label(card) + " and keep " + label(drawn) + " — remember where they are.");
+  note({ kind: "wrong-dump", actor: whoPid(actor), card: pub(card), other: pub(drawn), seen: true, otherSeen: true });
   render();
-  clearKeepBothTimer();
-  keepBothTimer = setTimeout(function() {
-    if (!G || G.phase !== "keepBoth") return;
-    endKeepBothReveal();
-  }, KEEP_BOTH_MS);
+  armKeepTimer();
 }
 function render() {
   if (mode === "online") return renderOnline();
@@ -2584,6 +2813,7 @@ function drawCard() {
     G.actEndsAt = null;
     addDumpPicks(G.turn);
     say("Drew " + label(card) + ". " + (isPowerRank(card.r) ? powerHint(card.r) + " " : "") + "Pass leaves it for others to Pick. Dump an opponent match (wrong card = you take theirs + keep center). 30 seconds to move — if time runs out you keep the center card.");
+    note({ kind: "draw", actor: "you", card: pub(card), seen: true, power: isPowerRank(card.r) ? card.r : "" });
     render();
   } catch (e) { err(e.message); }
 }
@@ -2591,6 +2821,7 @@ function pass() {
   if (!G || G.phase !== "act" || cpu()) return;
   G.free = true;
   say("Passed. " + label(pileTop()) + " stays in the center — next player can Pick it or Discard a match.");
+  note({ kind: "pass", actor: "you", card: pub(pileTop()), seen: true });
   finish();
 }
 function armPick() {
@@ -2774,12 +3005,9 @@ function keepCenterCard() {
   G.phase = "keepBoth";
   G.keepBoth = { pid: pid, handI: placedI, placedI: placedI, priorHandKnown: false };
   say("Time's up. You keep " + label(drawn) + " — remember where it is.");
+  note({ kind: "keep", actor: whoPid(pid), card: pub(drawn), seen: true, timedOut: true });
   render();
-  clearKeepBothTimer();
-  keepBothTimer = setTimeout(function() {
-    if (!G || G.phase !== "keepBoth") return;
-    endKeepBothReveal();
-  }, KEEP_BOTH_MS);
+  armKeepTimer();
 }
 function localAutoPass() {
   if (!G || (!G.pending && !localTurnWaiting())) return;
@@ -2793,6 +3021,7 @@ function localAutoPass() {
   clearMoveState();
   G.free = false;
   say("Time's up. Passed.");
+  note({ kind: "pass", actor: whoPid(G.turn), timedOut: true, seen: false });
   finish();
 }
 function expireOnlineTurn() {
@@ -2828,12 +3057,11 @@ function startPeekReveal(peeker, targetPid, i, next, prefix) {
   G.peekReveal = { peeker: peeker, targetPid: targetPid, i: i, next: next, priorKnown: priorKnown };
   G.pick = [];
   say((prefix || "Peeked ") + label(card) + ". Memorize it — it flips face-down again.");
+  var peekPower = G.power || "";
+  var humanSees = peeker !== 1;
+  note({ kind: "peek", actor: humanSees ? "you" : "computer", power: peekPower, card: pub(card), seen: humanSees, hidden: !humanSees });
   render();
-  clearPeekTimer();
-  peekTimer = setTimeout(function() {
-    if (!G || G.phase !== "peekReveal") return;
-    endPeekReveal();
-  }, PEEK_MS);
+  armPeekTimer();
 }
 function endPeekReveal() {
   if (!G || G.phase !== "peekReveal" || !G.peekReveal) return;
@@ -2948,12 +3176,9 @@ function wrongDiscardKeepBoth(pid, slotI) {
   G.phase = "keepBoth";
   G.keepBoth = { pid: pid, handI: slotI, placedI: placedI, priorHandKnown: priorHandKnown };
   say("Not a match. You keep " + label(drawn) + " and " + label(card) + " — remember where they are.");
+  note({ kind: "wrong-discard", actor: whoPid(pid), card: pub(card), other: pub(drawn), seen: true, otherSeen: true });
   render();
-  clearKeepBothTimer();
-  keepBothTimer = setTimeout(function() {
-    if (!G || G.phase !== "keepBoth") return;
-    endKeepBothReveal();
-  }, KEEP_BOTH_MS);
+  armKeepTimer();
 }
 function swapIntoHand(pid, i) {
   var card = G.players[pid].slots[i];
@@ -2969,7 +3194,7 @@ function swapIntoHand(pid, i) {
   return taken;
 }
 function onCard(ev) {
-  if (suppressClick) return;
+  if (trialHold || suppressClick) return;
   try {
     var pid = Number(ev.currentTarget.getAttribute("data-p"));
     var i = Number(ev.currentTarget.getAttribute("data-i"));
@@ -3002,6 +3227,7 @@ function onCard(ev) {
       G.free = true;
       G.chainSkipFree = null;
       say("Discarded matching " + label(ch) + (afterPeek ? " after the peek." : " after swap.") + " Turn ends; next can Pick it.");
+      note({ kind: "discard", actor: whoPid(pid), card: pub(ch), other: pub(G.pile.length > 1 ? G.pile[G.pile.length - 2] : null), seen: true, otherSeen: true });
       G.pick = []; G.chainPid = null; G.chainRank = null;
       return finish();
     }
@@ -3020,6 +3246,7 @@ function onCard(ev) {
         G.discardOnDraw = true;
         G.free = true; // discarded top Pickable by next
         say("Discarded " + label(card) + " on top of " + label(drawn) + ". One match action — turn ends; next can Pick it.");
+        note({ kind: "discard", actor: "you", card: pub(card), other: pub(drawn), seen: true, otherSeen: true });
         return beginChain(pid, card.r);
       }
       // Wrong rank: no do-over — keep both cards, brief reveal, end turn
@@ -3030,6 +3257,7 @@ function onCard(ev) {
     if (mode === "local") taken.known[1] = true;
     var dumped = G.pile[G.pile.length - 1];
     say((G.intent === "claim" ? "Picked " : "Swapped in ") + label(taken) + " — " + label(dumped) + " on center.");
+    note({ kind: G.intent === "claim" ? "pick" : "swap", actor: "you", card: pub(taken), other: pub(dumped), seen: true, otherSeen: true });
     beginChain(pid, dumped.r, true);
   } catch (e) { err(e.message); }
 }
@@ -3071,12 +3299,17 @@ function beginChain(pid, rank, allowOne, opts) {
     G.chainSkipFree = false;
   }
   say((opts && opts.log) || ("You put " + rank + " on center — discard one matching " + rank + " from hand (or dump an opponent " + rank + "), or Done. One only — not a chain."));
+  var hiddenFollow = pid === 1 && keepCenter;
+  note({ kind: "chain", actor: pid === 1 ? "computer" : "you", rank: rank, rankPublic: !hiddenFollow, hidden: hiddenFollow });
   render();
   if (G.chainPid === 1) cpuSoon(cpuChainPlay, 450);
 }
 function passChain() {
   if (!G || G.phase !== "chain") return;
   var keepCenter = G.chainSkipFree === false;
+  var chainActor = G.chainPid;
+  var chainRank = G.chainRank;
+  var hiddenFollow = chainActor === 1 && keepCenter;
   G.pick = []; G.chainPid = null; G.chainRank = null; G.chainSkipFree = null;
   if (keepCenter) {
     G.free = false;
@@ -3085,6 +3318,7 @@ function passChain() {
     if (pileTop()) G.free = true;
     say("Done — skipped extra match after swap. Next can Pick center.");
   }
+  note({ kind: "chain-skip", actor: chainActor === 1 ? "computer" : "you", rank: chainRank, rankPublic: !hiddenFollow, hidden: hiddenFollow });
   finish();
 }
 
@@ -3107,6 +3341,7 @@ function startPower() {
   G.pick = [];
   fillPowerPicks();
   say(powerHint(top.r) + " Tap a highlighted card.");
+  note({ kind: "power", actor: "you", power: top.r });
   render();
 }
 function fillPowerPicks() {
@@ -3129,6 +3364,7 @@ function skipKingTrade() {
   G.free = true;
   // Peeks were temporary UI; AI memory already kept in endPeekReveal for peeker seat only
   say("Skipped trade. K stays pickable for next.");
+  note({ kind: "king-skip", actor: whoPid(G.turn), power: "K", hidden: G.turn === 1 });
   G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
   offerLocalFollowUp(G.turn, false);
 }
@@ -3156,6 +3392,7 @@ function confirmKingTrade() {
   }
   // Vague log — do not reveal which cards moved; K remains pickable for next
   say(G.players[me].name + " traded after King peeks. K stays pickable for next.");
+  note({ kind: "king-trade", actor: whoPid(me), power: "K", card: pub(myCard), other: pub(oppCard), seen: me !== 1, otherSeen: me !== 1, hidden: me === 1 });
   G.free = true; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
   offerLocalFollowUp(me, false);
 }
@@ -3169,6 +3406,7 @@ function onPowerCard(pid, i) {
       var peekedCpu = G.players[pid].slots[i];
       peekedCpu.known[me] = true;
       say("Computer peeked own card.");
+      note({ kind: "peek", actor: "computer", power: "10", hidden: true, seen: false });
       G.power = null; G.powerStep = null; G.pick = [];
       var topCpu = pileTop();
       if (peekedCpu && topCpu && peekedCpu.r === topCpu.r && !G.discardOnDraw) {
@@ -3192,6 +3430,7 @@ function onPowerCard(pid, i) {
       var jackCard = G.players[pid].slots[i];
       jackCard.known[me] = true;
       say("Computer peeked an opponent card.");
+      note({ kind: "peek", actor: "computer", power: "J", hidden: true, seen: false });
       G.power = null; G.powerStep = null; G.pick = [];
       var jackTop = pileTop();
       if (jackCard && jackTop && jackCard.r === jackTop.r && !G.discardOnDraw) {
@@ -3239,6 +3478,7 @@ function onPowerCard(pid, i) {
     if (cpuKnewTheirs && G.players[a.pid].slots[a.i]) G.players[a.pid].slots[a.i].known[cpuId()] = true;
     if (cpuKnewMine && G.players[pid].slots[i]) G.players[pid].slots[i].known[cpuId()] = true;
     say("Blind-traded with " + G.players[pid].name + ".");
+    note({ kind: "queen", actor: whoPid(me), power: "Q", hidden: true });
     G.free = false; G.power = null; G.powerStep = null; G.powerTarget = null; G.powerMine = null; G.pick = [];
     finish();
     return true;
@@ -3248,6 +3488,7 @@ function onPowerCard(pid, i) {
     if (me === cpuId()) {
       // AI memory only (known[cpu] never face-up for human); no label leak in log
       G.players[pid].slots[i].known[me] = true;
+      note({ kind: "peek", actor: "computer", power: "K", hidden: true, seen: false });
       G.powerMine = { pid: pid, i: i };
       G.powerStep = "k-peek-opp";
       G.pick = [];
@@ -3270,6 +3511,7 @@ function onPowerCard(pid, i) {
     if (handLocked(pid)) return false;
     if (me === cpuId()) {
       G.players[pid].slots[i].known[me] = true;
+      note({ kind: "peek", actor: "computer", power: "K", hidden: true, seen: false });
       G.powerTarget = { pid: pid, i: i };
       G.powerStep = "k-trade";
       G.pick = [];
@@ -3292,6 +3534,7 @@ function declareRound() {
   G.queue = [];
   for (var i = 0; i < G.n; i++) if (i !== G.turn) G.queue.push(i);
   say(G.players[G.turn].name + " declared. Their hand is locked — no dumps, peeks, or trades against it. Final turns: draw/discard/pick on your own hand & center only.");
+  note({ kind: "declare", actor: whoPid(G.turn) });
   next();
 }
 function finish() {
@@ -3325,11 +3568,13 @@ function reveal() {
   for (var wi = 0; wi < G.n; wi++) if (scores[wi] === low) winners.push(G.players[wi].name);
   text += winners.length > 1 ? "Tie." : winners[0] + " wins.";
   say(text);
+  note({ kind: "score", actor: "you", lines: scores.map(function(s, i) { return G.players[i].name + " " + s; }).join(", "), tie: winners.length > 1, winner: winners.length > 1 ? "" : winners[0] });
   render();
 }
 function cpuSoon(fn, ms) {
   setTimeout(function() {
     if (!G || mode !== "local") return;
+    if (trial && (trialHold || trialQueue.length)) { trialResume.push(fn); return; }
     fn();
   }, ms == null ? 500 : ms);
 }
@@ -3413,6 +3658,7 @@ function cpuClaimIfUseful() {
   swapIntoHand(cpuId(), worst);
   cpuMarkSwapIn(cpuId(), worst);
   say("Computer picked " + label(taken) + " from the center (passed/discarded).");
+  note({ kind: "pick", actor: "computer", card: pub(taken), other: pub(dumped), seen: true, otherSeen: true });
   beginChain(cpuId(), dumped.r, true);
   return true;
 }
@@ -3426,6 +3672,7 @@ function cpuDoDeclare() {
   G.queue = [];
   for (var i = 0; i < G.n; i++) if (i !== cpuId()) G.queue.push(i);
   say("Computer declared. Their hand is locked — no dumps, peeks, or trades against it. Final turns: draw/discard/pick on your own hand & center only.");
+  note({ kind: "declare", actor: "computer" });
   next();
   return true;
 }
@@ -3468,6 +3715,7 @@ function cpuMatchOpenCenter() {
     G.discardOnDraw = true;
     G.free = true;
     say("Computer discarded a match (" + label(dumped) + ") onto " + label(drawn) + ". One match action — your turn can Pick it.");
+    note({ kind: "discard", actor: "computer", card: pub(dumped), other: pub(drawn), seen: true, otherSeen: true });
     beginChain(me, dumped.r);
     return true;
   }
@@ -3488,6 +3736,7 @@ function cpuTurn() {
   G.pile.push(drawn);
   G.phase = "act";
   say("Computer drew " + label(drawn) + ".");
+  note({ kind: "draw", actor: "computer", card: pub(drawn), seen: true, power: isPowerRank(drawn.r) ? drawn.r : "" });
   render();
   cpuSoon(cpuAct, 550);
 }
@@ -3520,6 +3769,7 @@ function cpuDoDump(oppPid, slotI, rank) {
   G.discardOnDraw = true;
   G.free = true; // dumped center Pickable after computer turn
   say("Computer dumped your " + label(card) + " onto the center.");
+  note({ kind: "dump", actor: "computer", card: pub(card), other: pub(G.pile.length > 1 ? G.pile[G.pile.length - 2] : null), seen: true, otherSeen: true });
   G.dumpGive = { actor: me, oppPid: oppPid, emptiedI: slotI, rank: rank };
   G.phase = "dumpGive";
   G.intent = null;
@@ -3566,6 +3816,7 @@ function cpuAct() {
     G.discardOnDraw = true;
     G.free = true; // discarded top Pickable by you next
     say("Computer discarded a match (" + label(dumpedMatch) + ") onto " + label(drawn) + ". One match action — your turn can Pick it.");
+    note({ kind: "discard", actor: "computer", card: pub(dumpedMatch), other: pub(drawn), seen: true, otherSeen: true });
     return beginChain(me, dumpedMatch.r);
   }
   // Often use power instead of blind pass/swap
@@ -3580,11 +3831,13 @@ function cpuAct() {
     cpuMarkSwapIn(me, worst);
     G.free = false;
     say("Computer swapped in " + label(drawn) + " — " + label(leaving) + " on center.");
+    note({ kind: "swap", actor: "computer", card: pub(drawn), other: pub(leaving), seen: true, otherSeen: true });
     return beginChain(me, leaving.r, true);
   }
   // Avoid swapping away unknown if drawn is mediocre; pass
   G.free = true;
   say("Computer passed. " + label(drawn) + " stays in the center — you can Pick it.");
+  note({ kind: "pass", actor: "computer", card: pub(drawn), seen: true });
   finish();
 }
 function cpuShouldUsePower(rank) {
@@ -3618,6 +3871,7 @@ function cpuStartPower(rank) {
   G.pick = [];
   fillPowerPicks();
   say("Computer uses " + rank + " power. " + powerHint(rank));
+  note({ kind: "power", actor: "computer", power: rank });
   render();
   cpuSoon(cpuPowerStep, 500);
   return true;
@@ -3758,6 +4012,7 @@ function cpuChainPlay() {
   G.free = true;
   G.chainSkipFree = null;
   say("Computer discarded matching " + label(ch) + (afterPeekCpu ? " after the peek." : " after swap.") + " Turn ends.");
+  note({ kind: "discard", actor: "computer", card: pub(ch), other: pub(G.pile.length > 1 ? G.pile[G.pile.length - 2] : null), seen: true, otherSeen: true });
   G.pick = []; G.chainPid = null; G.chainRank = null;
   finish();
 }
@@ -3804,10 +4059,54 @@ var authSession = null;
 var authMode = "in";
 var AUTH_KEY = "declare-auth";
 function signedIn() { return !!(authUser && authUser.id); }
-function requirePlay() {
-  if (signedIn()) return true;
-  showSignedOut();
+function accountGate(action) {
+  var apiTrial = globalThis.DeclareTrial;
+  if (!apiTrial || !apiTrial.guestGate) {
+    var open = action === "trial" || action === "computer" || action === "local";
+    return { ok: open || signedIn(), prompt: open ? "" : "Sign in or create an account to play with friends or use chip tables. A computer game and the Trial Game stay open without an account." };
+  }
+  return apiTrial.guestGate(action, signedIn());
+}
+function requireAccount(action) {
+  var gate = accountGate(action);
+  if (gate.ok) return true;
+  promptSignIn(gate.prompt);
   return false;
+}
+function showLobby() {
+  var setup = document.getElementById("setup");
+  if (setup) { setup.hidden = false; setup.style.display = "block"; }
+}
+function closeAuthPrompt() {
+  var signin = document.getElementById("signin");
+  if (signin) signin.hidden = true;
+}
+function promptSignIn(message) {
+  var lead = document.getElementById("authLead");
+  if (lead) lead.textContent = message || "Sign in or create an account to play with friends or use chip tables. A computer game and the Trial Game stay open without an account.";
+  var signin = document.getElementById("signin");
+  if (signin) signin.hidden = false;
+  var email = document.getElementById("authEmail");
+  if (email && email.focus) email.focus();
+}
+function paintAccountChrome() {
+  var signed = signedIn();
+  var out = document.getElementById("signOutBtn");
+  var inn = document.getElementById("signInBtn");
+  var who = document.getElementById("signedInAs");
+  var guest = document.getElementById("guestChipNote");
+  if (out) out.hidden = !signed;
+  if (inn) inn.hidden = signed;
+  if (who) {
+    who.hidden = !signed || !authUser || !authUser.email;
+    who.textContent = signed && authUser && authUser.email ? authUser.email : "";
+  }
+  if (guest) guest.hidden = signed;
+  if (!signed) {
+    var wallet = document.getElementById("walletChips");
+    if (wallet) wallet.textContent = "—";
+    chipWallet = null;
+  }
 }
 function authHeaders() {
   var headers = { "Content-Type": "application/json" };
@@ -3828,29 +4127,17 @@ function loadStoredAuth() {
   authUser = authSession && authSession.user && authSession.user.id ? { id: authSession.user.id, email: authSession.user.email || "" } : null;
 }
 function showSignedOut() {
-  var signin = document.getElementById("signin");
-  var setup = document.getElementById("setup");
+  closeAuthPrompt();
+  paintAccountChrome();
+  if (G && mode === "local") return;
   var table = document.getElementById("table");
-  if (signin) signin.hidden = false;
-  if (setup) { setup.hidden = true; setup.style.display = "none"; }
-  if (table) table.style.display = "none";
-  var out = document.getElementById("signOutBtn");
-  var who = document.getElementById("signedInAs");
-  if (out) out.hidden = true;
-  if (who) { who.hidden = true; who.textContent = ""; }
+  if (table && mode !== "local") table.style.display = "none";
+  showLobby();
 }
 function showSignedIn() {
-  var signin = document.getElementById("signin");
-  var setup = document.getElementById("setup");
-  if (signin) signin.hidden = true;
-  if (setup) { setup.hidden = false; setup.style.display = "block"; }
-  var out = document.getElementById("signOutBtn");
-  var who = document.getElementById("signedInAs");
-  if (out) out.hidden = false;
-  if (who) {
-    who.hidden = !authUser || !authUser.email;
-    who.textContent = authUser && authUser.email ? authUser.email : "";
-  }
+  closeAuthPrompt();
+  showLobby();
+  paintAccountChrome();
   var name = document.getElementById("name");
   if (name && !name.value && authUser && authUser.email) name.value = String(authUser.email).split("@")[0].slice(0, 16);
 }
@@ -4003,7 +4290,8 @@ function signOut() {
 }
 (function boot() {
   loadStoredAuth();
-  showSignedOut();
+  showLobby();
+  paintAccountChrome();
   if (lobbyTimer) clearInterval(lobbyTimer);
   lobbyTimer = setInterval(function() {
     var setup = document.getElementById("setup");
@@ -4016,7 +4304,16 @@ function signOut() {
   ensureWs(function() {
     applyAuthProviders();
     refreshAuth().then(function() { return finishAuthRedirect(); }).then(function() {
-      if (!signedIn()) { showSignedOut(); return; }
+      if (!signedIn()) {
+        showSignedOut();
+        var join = new URLSearchParams(location.search).get("join");
+        if (join) {
+          var codeBox = document.getElementById("joinCode");
+          if (codeBox) codeBox.value = join.toUpperCase();
+          promptSignIn(accountGate("join").prompt || "Sign in or create an account to join this room.");
+        }
+        return;
+      }
       enterSignedIn();
     });
   });
