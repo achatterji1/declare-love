@@ -96,6 +96,20 @@
   .signin-body { max-width: 420px; margin: 0 auto; padding: 8px 28px 28px; }
   #authLead { margin: 6px 0 0; color: var(--muted); }
   #authMsg { color: var(--muted); min-height: 1.2em; text-align: center; margin: 12px 0 0; }
+  #authMsg.error { color: var(--red); }
+  #authMsg.ok { color: var(--olive-dark); }
+  #forgotPassword {
+    justify-self: center; width: auto; margin: 2px 0 0; padding: 8px 4px;
+    background: transparent; border: 0; box-shadow: none;
+    color: var(--olive-dark); font-weight: 700; text-decoration: underline; text-underline-offset: 3px;
+  }
+  #forgotPassword:hover:not(:disabled) { background: transparent; border: 0; color: var(--ink); transform: none; }
+  #forgotPassword[hidden],
+  #authSwitch[hidden],
+  #authEmailField[hidden],
+  #authPasswordField[hidden],
+  #authNewPasswordField[hidden],
+  #authConfirmField[hidden] { display: none; }
   .guest-note { margin: 8px 0 0; color: var(--muted); }
   #trialPanel {
     position: sticky; top: 8px; z-index: 6;
@@ -474,15 +488,18 @@
       <div><h2 id="authTitle">Sign in</h2><p id="authLead">Sign in or create an account to play with friends or use chip tables. A computer game and the Trial Game stay open without an account.</p></div>
       <button type="button" id="authClose" onclick="closeAuthPrompt()">Close</button>
     </div>
-    <form class="signin-body" id="signinForm" onsubmit="submitAuth(event)">
-      <div class="field"><label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="username" required maxlength="120"></div>
-      <div class="field"><label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required minlength="6" maxlength="72"></div>
+    <form class="signin-body" id="signinForm" novalidate onsubmit="submitAuth(event)">
+      <div class="field" id="authEmailField"><label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="username" required maxlength="120"></div>
+      <div class="field" id="authPasswordField"><label for="authPassword">Password</label><input id="authPassword" type="password" autocomplete="current-password" required minlength="6" maxlength="72"></div>
+      <div class="field" id="authNewPasswordField" hidden><label for="authNewPassword">New password</label><input id="authNewPassword" type="password" autocomplete="new-password" maxlength="72"></div>
+      <div class="field" id="authConfirmField" hidden><label for="authConfirm">Confirm password</label><input id="authConfirm" type="password" autocomplete="new-password" maxlength="72"></div>
       <div class="action-stack">
         <button class="primary" type="submit" id="authSubmit">Sign in</button>
         <button class="outline" type="button" id="authSwitch" onclick="toggleAuthMode()">Create an account</button>
+        <button type="button" id="forgotPassword" onclick="showForgotPassword()">Forgot password?</button>
         <button class="outline" type="button" id="googleBtn" hidden onclick="googleSignIn()">Continue with Google</button>
       </div>
-      <p id="authMsg"></p>
+      <p id="authMsg" role="status"></p>
     </form>
     </div>
   </section>
@@ -780,6 +797,7 @@
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="trial.js"></script>
+<script src="password-reset.js"></script>
 <script>
 var RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 var SUITS = ["H","D","C","S"];
@@ -4057,6 +4075,9 @@ window.onerror = function(msg) { err(msg); };
 var authUser = null;
 var authSession = null;
 var authMode = "in";
+var sbAuth = null;
+var recoveryBoot = null;
+var closingAuth = false;
 var AUTH_KEY = "declare-auth";
 function signedIn() { return !!(authUser && authUser.id); }
 function accountGate(action) {
@@ -4080,10 +4101,28 @@ function showLobby() {
 function closeAuthPrompt() {
   var signin = document.getElementById("signin");
   if (signin) signin.hidden = true;
+  if (closingAuth) return;
+  if ((authMode !== "recover" && authMode !== "done") || !signedIn()) return;
+  closingAuth = true;
+  authMode = "in";
+  showLobby();
+  paintAccountChrome();
+  var name = document.getElementById("name");
+  if (name && !name.value && authUser && authUser.email) name.value = String(authUser.email).split("@")[0].slice(0, 16);
+  loadChipLobby();
+  closingAuth = false;
 }
 function promptSignIn(message) {
+  if (authMode === "recover") {
+    var open = document.getElementById("signin");
+    if (open) open.hidden = false;
+    return;
+  }
   var lead = document.getElementById("authLead");
-  if (lead) lead.textContent = message || "Sign in or create an account to play with friends or use chip tables. A computer game and the Trial Game stay open without an account.";
+  var text = message || "Sign in or create an account to play with friends or use chip tables. A computer game and the Trial Game stay open without an account.";
+  if (lead) lead.dataset.signLead = text;
+  setAuthMode("in");
+  if (lead) lead.textContent = text;
   var signin = document.getElementById("signin");
   if (signin) signin.hidden = false;
   var email = document.getElementById("authEmail");
@@ -4141,18 +4180,99 @@ function showSignedIn() {
   var name = document.getElementById("name");
   if (name && !name.value && authUser && authUser.email) name.value = String(authUser.email).split("@")[0].slice(0, 16);
 }
-function authMessage(text) {
+function authMessage(text, kind) {
   var el = document.getElementById("authMsg");
-  if (el) el.textContent = text || "";
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("error", kind === "error");
+  el.classList.toggle("ok", kind === "ok");
 }
-function toggleAuthMode() {
-  authMode = authMode === "in" ? "up" : "in";
+function passwordApi() {
+  return globalThis.DeclarePassword || null;
+}
+function fieldRequired(id, on) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  if (on) el.setAttribute("required", "");
+  else el.removeAttribute("required");
+}
+function showField(id, on) {
+  var el = document.getElementById(id);
+  if (el) el.hidden = !on;
+}
+function syncGoogleButton() {
+  var google = document.getElementById("googleBtn");
+  var api = passwordApi();
+  if (!google || !api) return;
+  google.hidden = !(cfg && cfg.google) || !api.authView(authMode).showGoogle;
+}
+function setAuthMode(mode) {
+  var prev = authMode;
+  if (prev === mode && (mode === "recover" || mode === "done")) return;
+  var api = passwordApi();
+  var view = api ? api.authView(mode) : null;
+  if (!view) return;
+  authMode = mode;
+  var title = document.getElementById("authTitle");
+  var lead = document.getElementById("authLead");
   var submit = document.getElementById("authSubmit");
   var swap = document.getElementById("authSwitch");
+  var forgot = document.getElementById("forgotPassword");
   var password = document.getElementById("authPassword");
-  if (submit) submit.textContent = authMode === "in" ? "Sign in" : "Create account";
-  if (swap) swap.textContent = authMode === "in" ? "Create an account" : "Already have an account";
-  if (password) password.setAttribute("autocomplete", authMode === "in" ? "current-password" : "new-password");
+  if (lead && (prev === "in" || prev === "up") && mode !== "in" && mode !== "up") lead.dataset.signLead = lead.textContent;
+  if (title) title.textContent = view.title;
+  if (lead) {
+    if (view.lead) lead.textContent = view.lead;
+    else if (lead.dataset.signLead) lead.textContent = lead.dataset.signLead;
+  }
+  showField("authEmailField", view.showEmail);
+  showField("authPasswordField", view.showPassword);
+  showField("authNewPasswordField", view.showNew);
+  showField("authConfirmField", view.showConfirm);
+  fieldRequired("authEmail", view.showEmail);
+  fieldRequired("authPassword", view.showPassword);
+  fieldRequired("authNewPassword", view.showNew);
+  fieldRequired("authConfirm", view.showConfirm);
+  if (password) {
+    password.setAttribute("autocomplete", mode === "up" ? "new-password" : "current-password");
+    password.setAttribute("minlength", String(api.PASSWORD_MIN_LENGTH));
+  }
+  if (submit) {
+    submit.disabled = false;
+    submit.textContent = view.submit;
+  }
+  if (swap) {
+    swap.hidden = !view.showSwap;
+    if (view.swap) swap.textContent = view.swap;
+  }
+  if (forgot) forgot.hidden = !view.showForgot;
+  syncGoogleButton();
+}
+function showForgotPassword() {
+  setAuthMode("forgot");
+  authMessage("");
+  var email = document.getElementById("authEmail");
+  if (email && email.focus) email.focus();
+}
+function openSetPassword() {
+  setAuthMode("recover");
+  var signin = document.getElementById("signin");
+  if (signin) signin.hidden = false;
+  authMessage("");
+  var input = document.getElementById("authNewPassword");
+  if (input && input.focus) input.focus();
+}
+function showResetSuccess() {
+  setAuthMode("done");
+  var signin = document.getElementById("signin");
+  if (signin) signin.hidden = false;
+  authMessage("Your password is updated. You're signed in.", "ok");
+  showLobby();
+  paintAccountChrome();
+}
+function toggleAuthMode() {
+  if (authMode === "forgot" || authMode === "recover" || authMode === "done") setAuthMode("in");
+  else setAuthMode(authMode === "in" ? "up" : "in");
   authMessage("");
 }
 function sessionFromToken(body) {
@@ -4183,11 +4303,163 @@ function refreshAuth() {
     return true;
   }).catch(function() { saveAuth(null); return false; });
 }
+function normalizeSupabaseSession(session) {
+  if (!session || !session.access_token || !session.user || !session.user.id) return null;
+  return {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token || "",
+    expires_at: session.expires_at || null,
+    expires_in: session.expires_in || null,
+    token_type: session.token_type || "bearer",
+    user: { id: session.user.id, email: session.user.email || "" }
+  };
+}
+function authBrowser() {
+  if (sbAuth) return sbAuth;
+  if (!window.supabase || !cfg || !cfg.url || !cfg.key) return null;
+  var api = passwordApi();
+  var detect = !!(api && api.isRecoveryGrant(recoveryBoot));
+  sbAuth = window.supabase.createClient(cfg.url, cfg.key, {
+    auth: {
+      flowType: "implicit",
+      detectSessionInUrl: detect,
+      persistSession: true,
+      autoRefreshToken: true,
+      storageKey: "declare-sb-auth"
+    }
+  });
+  sbAuth.auth.onAuthStateChange(function(event, session) {
+    if (event === "PASSWORD_RECOVERY") acceptRecoverySession(session);
+  });
+  return sbAuth;
+}
+function cleanAuthUrl() {
+  if (!window.history || !window.history.replaceState) return;
+  var params = new URLSearchParams(location.search);
+  ["code", "type", "error", "error_code", "error_description"].forEach(function(key) { params.delete(key); });
+  var search = params.toString();
+  window.history.replaceState(null, "", location.pathname + (search ? "?" + search : ""));
+}
+function acceptRecoverySession(session) {
+  var stored = normalizeSupabaseSession(session);
+  if (!stored) return;
+  saveAuth(stored);
+  cleanAuthUrl();
+  paintAccountChrome();
+  openSetPassword();
+}
+function ensureRecoveryClientSession(client) {
+  return client.auth.getSession().then(function(res) {
+    if (res && res.data && res.data.session) return;
+    if (!authSession || !authSession.access_token || !authSession.refresh_token) {
+      throw new Error("This reset link is invalid or has expired.");
+    }
+    return client.auth.setSession({
+      access_token: authSession.access_token,
+      refresh_token: authSession.refresh_token
+    }).then(function(setRes) {
+      if (setRes.error) throw setRes.error;
+      var stored = normalizeSupabaseSession(setRes.data && setRes.data.session);
+      if (stored) saveAuth(stored);
+    });
+  });
+}
+function adoptRecoveryTokens(fragment) {
+  return authFetch("user", { method: "GET", headers: { Authorization: "Bearer " + fragment.accessToken } }).then(function(user) {
+    if (!user || !user.id) throw new Error("expired");
+    saveAuth({
+      access_token: fragment.accessToken,
+      refresh_token: fragment.refreshToken || "",
+      expires_at: Number(fragment.expiresAt) || null,
+      user: { id: user.id, email: user.email || "" }
+    });
+    cleanAuthUrl();
+    paintAccountChrome();
+    openSetPassword();
+    var client = authBrowser();
+    if (!client || !fragment.refreshToken) return "recovery";
+    return client.auth.setSession({
+      access_token: fragment.accessToken,
+      refresh_token: fragment.refreshToken
+    }).then(function(setRes) {
+      var stored = normalizeSupabaseSession(setRes && setRes.data && setRes.data.session);
+      if (stored) saveAuth(stored);
+      return "recovery";
+    }).catch(function() { return "recovery"; });
+  }).catch(function() {
+    cleanAuthUrl();
+    promptSignIn();
+    authMessage("This reset link is invalid or has expired.", "error");
+    return "recovery-error";
+  });
+}
+function submitForgot() {
+  var email = (document.getElementById("authEmail").value || "").trim();
+  var api = passwordApi();
+  authMessage("");
+  if (!email) { authMessage("Enter the email on your account.", "error"); return; }
+  if (!api) { authMessage("Password reset is unavailable.", "error"); return; }
+  ensureWs(function() {
+    var client = authBrowser();
+    if (!client) { authMessage("Password reset is unavailable.", "error"); return; }
+    var submit = document.getElementById("authSubmit");
+    if (submit) submit.disabled = true;
+    client.auth.resetPasswordForEmail(email, { redirectTo: api.passwordResetRedirect(location) }).then(function(res) {
+      if (res && res.error) {
+        var shown = api.publicResetError(res.error.message);
+        if (!shown) authMessage(api.resetSentMessage(), "ok");
+        else authMessage(shown, "error");
+        return;
+      }
+      authMessage(api.resetSentMessage(), "ok");
+    }).catch(function(e) {
+      authMessage((e && e.message) || "Could not send the reset email.", "error");
+    }).then(function() {
+      if (submit) submit.disabled = false;
+    });
+  });
+}
+function submitNewPassword() {
+  var api = passwordApi();
+  var next = (document.getElementById("authNewPassword").value || "");
+  var confirm = (document.getElementById("authConfirm").value || "");
+  var problem = api ? api.validateNewPassword(next, confirm) : "Password reset is unavailable.";
+  authMessage("");
+  if (problem) { authMessage(problem, "error"); return; }
+  var client = authBrowser();
+  if (!client) { authMessage("Password reset is unavailable.", "error"); return; }
+  var submit = document.getElementById("authSubmit");
+  if (submit) submit.disabled = true;
+  ensureRecoveryClientSession(client).then(function() {
+    return client.auth.updateUser({ password: next });
+  }).then(function(res) {
+    if (!res || res.error) throw (res && res.error) || new Error("Could not update the password.");
+    var user = res.data && res.data.user;
+    var stored = res.data && normalizeSupabaseSession(res.data.session);
+    if (stored) saveAuth(stored);
+    else if (user && authSession && authSession.user) {
+      authSession.user = { id: user.id || authSession.user.id, email: user.email || authSession.user.email || "" };
+      saveAuth(authSession);
+    }
+    showResetSuccess();
+  }).catch(function(e) {
+    authMessage((e && e.message) || "Could not update the password.", "error");
+  }).then(function() {
+    if (submit && authMode === "recover") submit.disabled = false;
+  });
+}
 function submitAuth(event) {
   if (event && event.preventDefault) event.preventDefault();
+  if (authMode === "forgot") { submitForgot(); return false; }
+  if (authMode === "recover") { submitNewPassword(); return false; }
+  if (authMode === "done") { enterSignedIn(); return false; }
   var email = (document.getElementById("authEmail").value || "").trim();
   var password = document.getElementById("authPassword").value || "";
   authMessage("");
+  if (!email) { authMessage("Enter your email.", "error"); return false; }
+  if (!password) { authMessage("Enter your password.", "error"); return false; }
+  var min = passwordApi() ? passwordApi().PASSWORD_MIN_LENGTH : 6;
+  if (password.length < min) { authMessage("Password must be at least " + min + " characters.", "error"); return false; }
   ensureWs(function() {
     var path = authMode === "up" ? "signup" : "token?grant_type=password";
     var body = authMode === "up" ? { email: email, password: password } : { email: email, password: password };
@@ -4198,12 +4470,12 @@ function submitAuth(event) {
         enterSignedIn();
         return;
       }
-      if (authMode === "up") authMessage("Check your email to confirm the account, then sign in.");
-      else authMessage("Sign-in did not return a session.");
+      if (authMode === "up") authMessage("Check your email to confirm the account, then sign in.", "ok");
+      else authMessage("Sign-in did not return a session.", "error");
     }).catch(function(e) {
       var msg = e.message || "Sign-in failed.";
       if (/email_provider_disabled|Email signups are disabled|Email logins are disabled/i.test(msg)) msg = "Email sign-in is not available on this project.";
-      authMessage(msg);
+      authMessage(msg, "error");
     });
   });
   return false;
@@ -4224,10 +4496,21 @@ function googleSignIn() {
       var challenge = bytesToBase64Url(new Uint8Array(digest));
       var redirect = location.origin + location.pathname;
       location.href = cfg.url.replace(/\/$/, "") + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(redirect) + "&code_challenge=" + encodeURIComponent(challenge) + "&code_challenge_method=s256";
-    }).catch(function() { authMessage("Google sign-in could not start."); });
+    }).catch(function() { authMessage("Google sign-in could not start.", "error"); });
   });
 }
 function finishAuthRedirect() {
+  var api = passwordApi();
+  if (api) {
+    var fragment = api.recoveryParams(location.hash, location.search);
+    if (api.isRecoveryGrant(fragment)) return adoptRecoveryTokens(fragment);
+    if (fragment.type === "recovery" && fragment.error) {
+      cleanAuthUrl();
+      promptSignIn();
+      authMessage(fragment.error, "error");
+      return Promise.resolve("recovery-error");
+    }
+  }
   var params = new URLSearchParams(location.search);
   var code = params.get("code");
   var hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
@@ -4244,7 +4527,7 @@ function finishAuthRedirect() {
     if (!session.user.id) return authFetch("user", { method: "GET", headers: { Authorization: "Bearer " + access } }).then(function(user) {
       session.user = { id: user.id, email: user.email || "" };
       saveAuth(session);
-    }).catch(function() { authMessage("Sign-in could not be finished."); });
+    }).catch(function() { authMessage("Sign-in could not be finished.", "error"); });
     saveAuth(session);
     return Promise.resolve();
   }
@@ -4255,11 +4538,10 @@ function finishAuthRedirect() {
     var session = sessionFromToken(body);
     if (session) saveAuth(session);
     if (window.history && window.history.replaceState) window.history.replaceState(null, "", location.pathname);
-  }).catch(function(e) { authMessage(e.message || "Google sign-in failed."); });
+  }).catch(function(e) { authMessage(e.message || "Google sign-in failed.", "error"); });
 }
 function applyAuthProviders() {
-  var google = document.getElementById("googleBtn");
-  if (google) google.hidden = !(cfg && cfg.google);
+  syncGoogleButton();
 }
 function enterSignedIn() {
   showSignedIn();
@@ -4284,6 +4566,11 @@ function signOut() {
   if (authSession && authSession.access_token && cfg) {
     authFetch("logout", { method: "POST", headers: { Authorization: "Bearer " + authSession.access_token } }).catch(function() {});
   }
+  if (sbAuth) {
+    var closing = sbAuth;
+    sbAuth = null;
+    closing.auth.signOut({ scope: "local" }).catch(function() {});
+  }
   saveAuth(null);
   returnToSetup();
   showSignedOut();
@@ -4292,10 +4579,11 @@ function signOut() {
   loadStoredAuth();
   showLobby();
   paintAccountChrome();
+  recoveryBoot = passwordApi() ? passwordApi().recoveryParams(location.hash, location.search) : null;
   if (lobbyTimer) clearInterval(lobbyTimer);
   lobbyTimer = setInterval(function() {
     var setup = document.getElementById("setup");
-    if (!signedIn() || !setup || setup.hidden || setup.style.display === "none") return;
+    if (authMode === "recover" || !signedIn() || !setup || setup.hidden || setup.style.display === "none") return;
     if (mode === "online" && roomCode) return;
     loadChipLobby();
   }, 4000);
@@ -4303,18 +4591,41 @@ function signOut() {
   claimTicker = setInterval(paintClaim, 1000);
   ensureWs(function() {
     applyAuthProviders();
-    refreshAuth().then(function() { return finishAuthRedirect(); }).then(function() {
-      if (!signedIn()) {
-        showSignedOut();
-        var join = new URLSearchParams(location.search).get("join");
-        if (join) {
-          var codeBox = document.getElementById("joinCode");
-          if (codeBox) codeBox.value = join.toUpperCase();
-          promptSignIn(accountGate("join").prompt || "Sign in or create an account to join this room.");
+    var client = authBrowser();
+    var ready = client ? client.auth.getSession().catch(function() { return null; }) : Promise.resolve(null);
+    var api = passwordApi();
+    var recovering = !!(api && api.isRecoveryGrant(recoveryBoot));
+    var refresh = recovering ? Promise.resolve(false) : refreshAuth();
+    refresh.then(function() { return ready; }).then(function(sessionRes) {
+      if (authMode === "recover" || authMode === "done") return;
+      if (api && api.isRecoveryGrant(recoveryBoot)) {
+        var clientSession = sessionRes && sessionRes.data && sessionRes.data.session;
+        if (clientSession && normalizeSupabaseSession(clientSession)) {
+          acceptRecoverySession(clientSession);
+          return;
         }
+        return adoptRecoveryTokens(recoveryBoot);
+      }
+      if (recoveryBoot && recoveryBoot.type === "recovery" && recoveryBoot.error) {
+        cleanAuthUrl();
+        promptSignIn();
+        authMessage(recoveryBoot.error, "error");
         return;
       }
-      enterSignedIn();
+      return finishAuthRedirect().then(function(kind) {
+        if (kind === "recovery" || kind === "recovery-error" || authMode === "recover" || authMode === "done") return;
+        if (!signedIn()) {
+          showSignedOut();
+          var join = new URLSearchParams(location.search).get("join");
+          if (join) {
+            var codeBox = document.getElementById("joinCode");
+            if (codeBox) codeBox.value = join.toUpperCase();
+            promptSignIn(accountGate("join").prompt || "Sign in or create an account to join this room.");
+          }
+          return;
+        }
+        enterSignedIn();
+      });
     });
   });
 })();
